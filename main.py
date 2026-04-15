@@ -48,21 +48,8 @@ MIRRORS = [
 ]
 current_mirror_index = 0
 
-def get_random_proxy():
-    """Выбор прокси из файла"""
-    try:
-        proxy_file = "proxies.txt"
-        if os.path.exists(proxy_file):
-            with open(proxy_file, 'r') as f:
-                proxies = [line.strip() for line in f if line.strip()]
-                if proxies:
-                    return random.choice(proxies)
-    except:
-        pass
-    return None
-
-def create_new_scraper(force_rotate=False):
-    """Создает сессию с поддержкой прокси и исправленным SSL"""
+def create_new_scraper():
+    """Создает сессию только с вашим быстрым прокси из Railway"""
     s = requests.Session()
     adapter = SSLAdapter()
     s.mount("https://", adapter)
@@ -77,23 +64,22 @@ def create_new_scraper(force_rotate=False):
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
     })
     
-    # Если PROXY_URL задан в Railway, используем его ВСЕГДА (не ротируем)
+    # Используем ТОЛЬКО PROXY_URL из Railway
     proxy_url = os.environ.get("PROXY_URL")
-    if not proxy_url:
-        proxy_url = get_random_proxy()
-        
     if proxy_url:
-        logger.info(f"Connecting via: {proxy_url}")
+        logger.info(f"Using fast proxy: {proxy_url}")
         s.proxies = {"http": proxy_url, "https": proxy_url}
+    else:
+        logger.warning("WARNING: PROXY_URL is not set in Railway variables!")
             
     return s
 
 def get_session(mirror_idx=None):
-    """Инициализация сессии HdRezkaApi с защитой"""
-    global current_mirror_index, scraper
+    """Инициализация сессии с вашим прокси"""
+    global current_mirror_index
     idx = mirror_idx if mirror_idx is not None else current_mirror_index
     origin = MIRRORS[idx].rstrip('/')
-    logger.info(f"Targeting mirror: {origin}")
+    logger.info(f"Connecting to Rezka mirror: {origin}")
     
     try:
         s = HdRezkaSession(origin)
@@ -103,7 +89,7 @@ def get_session(mirror_idx=None):
         logger.error(f"Failed to init session: {e}")
         return None
 
-# Глобальная сессия
+# Глобальные объекты
 scraper = create_new_scraper()
 session = get_session()
 
@@ -431,3 +417,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
