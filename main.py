@@ -270,12 +270,25 @@ async def get_info(url: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/stream")
-async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
-    """Получение потока через cloudscraper"""
+async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None, depth: int = 0):
+    """Получение потока с ротацией прокси при ошибках"""
+    global session, scraper
+    
+    if depth > 5:
+        raise HTTPException(status_code=500, detail="Failed to get stream after multiple attempts")
+
     try:
-        logger.info(f"Getting stream for: {url}, translator: {translator_id}, s: {season}, e: {episode}")
+        logger.info(f"Getting stream [Attempt {depth}]: {url}, translator: {translator_id}")
+        
+        # Обновляем сессию перед получением стрима
         rezka = session.get(url)
         
+        if not rezka.ok:
+             logger.warning(f"Rezka object not OK, retrying with new proxy...")
+             scraper = create_new_scraper(force_rotate=True)
+             session = get_session()
+             return await get_stream(url, translator_id, season, episode, depth + 1)
+
         if "tv_series" in str(rezka.type):
             if not season or not episode:
                 season, episode = "1", "1"
@@ -283,13 +296,22 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
         else:
             stream = rezka.getStream(translation=translator_id)
             
+        if not stream or not hasattr(stream, 'videos') or not stream.videos:
+            logger.warning("Stream empty or invalid, retrying with new proxy...")
+            scraper = create_new_scraper(force_rotate=True)
+            session = get_session()
+            return await get_stream(url, translator_id, season, episode, depth + 1)
+
         return {
             "videos": stream.videos,
             "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
         }
     except Exception as e:
-        logger.error(f"Stream error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Stream error [Attempt {depth}]: {str(e)}")
+        # При любой сетевой ошибке меняем прокси и пробуем снова
+        scraper = create_new_scraper(force_rotate=True)
+        session = get_session()
+        return await get_stream(url, translator_id, season, episode, depth + 1)
 
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
