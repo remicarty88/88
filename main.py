@@ -9,6 +9,15 @@ import requests
 import cloudscraper
 import time
 import random
+import ssl
+
+# Глобальный патч для SSL (решает проблему check_hostname в Python 3.12+)
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
