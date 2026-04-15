@@ -1,3 +1,6 @@
+
+
+
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -55,8 +58,10 @@ def create_new_scraper():
         }
     )
     
-    # КРИТИЧЕСКИ ВАЖНО: Отключаем проверку SSL
+    # КРИТИЧЕСКИ ВАЖНО: Отключаем все проверки SSL
     s.verify = False
+    # Исправляем ошибку "Cannot set verify_mode to CERT_NONE when check_hostname is enabled"
+    s.trust_env = False
     
     # Поддержка прокси
     proxy_url = os.environ.get("PROXY_URL") or get_random_proxy()
@@ -288,8 +293,8 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
             
         logger.info(f"Fetching [Attempt {depth}]: {url}")
         
-        # Используем глобальный scraper
-        response = scraper.get(url, timeout=10, verify=False)
+        # Используем глобальный scraper с увеличенным таймаутом
+        response = scraper.get(url, timeout=20, verify=False)
         
         if response.status_code == 200:
             # ... (парсинг)
@@ -357,5 +362,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
