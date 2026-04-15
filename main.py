@@ -36,16 +36,14 @@ class SSLAdapter(HTTPAdapter):
         kwargs["assert_hostname"] = False
         return super().init_poolmanager(*args, **kwargs)
 
-# Список максимально стабильных зеркал
+# Список актуальных рабочих зеркал
 MIRRORS = [
     "https://hdrezka.ag/", 
     "https://rezka.ag/", 
     "https://hdrezka.me/", 
     "https://hdrezka.sh/",
     "https://hdrezka.website/",
-    "https://hdrezka.ac/",
     "https://hdrezka.lv/",
-    "https://hdrezka.ag.video/",
     "https://hdrezka.cx/"
 ]
 current_mirror_index = 0
@@ -296,8 +294,12 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
             
         logger.info(f"Stream attempt {depth}: {full_url}")
         
-        # Получаем данные с жестким тайм-аутом в 10 секунд
-        rezka = session.get(full_url)
+        # Увеличиваем таймаут до 60 секунд для медленных SOCKS прокси
+        try:
+            rezka = session.get(full_url)
+        except Exception as e:
+            logger.error(f"Network error in session.get: {e}")
+            raise e
         t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
         
         if "series" in str(rezka.type).lower():
