@@ -98,6 +98,9 @@ def get_session(mirror_idx=None):
     logger.info(f"Using mirror: {origin}")
     s = HdRezkaSession(origin)
     s.session = create_new_scraper()
+    # Принудительно устанавливаем прокси для сессии библиотеки
+    if scraper.proxies:
+        s.session.proxies = scraper.proxies
     return s
 
 session = get_session()
@@ -129,6 +132,7 @@ async def search(query: str = Query(...), depth: int = 0):
 
         # 2. Прямой AJAX поиск
         if not results_list:
+            results = [] # Объявляем список перед использованием
             ajax_url = f"{session.origin.rstrip('/')}/engine/ajax/search.php"
             response = scraper.get(ajax_url, params={'q': query}, timeout=15)
             
