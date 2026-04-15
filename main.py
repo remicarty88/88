@@ -62,7 +62,7 @@ def get_random_proxy():
     return None
 
 def create_new_scraper(force_rotate=False):
-    """Создает сессию с поддержкой прокси и автоматической ротацией при ошибках"""
+    """Создает сессию с поддержкой прокси и исправленным SSL"""
     s = requests.Session()
     adapter = SSLAdapter()
     s.mount("https://", adapter)
@@ -75,31 +75,36 @@ def create_new_scraper(force_rotate=False):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Connection': 'keep-alive',
     })
     
-    # Если принудительная ротация или прокси не задан в переменных - берем из файла
+    # Если PROXY_URL задан в Railway, используем его ВСЕГДА (не ротируем)
     proxy_url = os.environ.get("PROXY_URL")
-    if not proxy_url or force_rotate:
+    if not proxy_url:
         proxy_url = get_random_proxy()
         
     if proxy_url:
-        logger.info(f"Using proxy: {proxy_url}")
+        logger.info(f"Connecting via: {proxy_url}")
         s.proxies = {"http": proxy_url, "https": proxy_url}
+            
     return s
 
-scraper = create_new_scraper()
-
 def get_session(mirror_idx=None):
-    """Инициализация сессии HdRezkaApi"""
+    """Инициализация сессии HdRezkaApi с защитой"""
     global current_mirror_index, scraper
     idx = mirror_idx if mirror_idx is not None else current_mirror_index
     origin = MIRRORS[idx].rstrip('/')
-    logger.info(f"Using mirror: {origin}")
-    s = HdRezkaSession(origin)
-    s.session = create_new_scraper()
-    return s
+    logger.info(f"Targeting mirror: {origin}")
+    
+    try:
+        s = HdRezkaSession(origin)
+        s.session = create_new_scraper()
+        return s
+    except Exception as e:
+        logger.error(f"Failed to init session: {e}")
+        return None
 
+# Глобальная сессия
+scraper = create_new_scraper()
 session = get_session()
 
 app = FastAPI()
@@ -426,4 +431,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
