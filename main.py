@@ -270,16 +270,23 @@ async def get_info(url: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/stream")
-async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
-    """Получение потока с расширенным логированием ошибок"""
-    global session, scraper
+async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None, depth: int = 0):
+    """Получение потока с автоматической ротацией прокси при ошибках"""
+    global session, scraper, current_mirror_index
+    
+    if depth > 3:
+        raise HTTPException(status_code=502, detail="Max retries reached for stream")
+
     try:
-        # 1. Исправляем URL если он относительный
+        # 1. Исправляем URL если он относительный (КРИТИЧНО для библиотеки)
         full_url = url
         if not url.startswith('http'):
-            full_url = session.origin.rstrip('/') + ("" if url.startswith('/') else "/") + url
+            # Убеждаемся что origin не имеет лишних слешей
+            base = session.origin.rstrip('/')
+            path = url if url.startswith('/') else f"/{url}"
+            full_url = f"{base}{path}"
             
-        logger.info(f"Stream request: {full_url}, translator: {translator_id}, s: {season}, e: {episode}")
+        logger.info(f"Stream request [Attempt {depth}]: {full_url}, translator: {translator_id}")
         
         # 2. Очищаем translator_id
         t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
@@ -292,24 +299,40 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
         
         # 4. Инициализация Rezka
         rezka = session.get(full_url)
-        rezka.session = scraper # Используем сессию с куками
+        
+        # Синхронизируем параметры сессии
+        rezka.proxy = scraper.proxies
+        rezka.HEADERS = scraper.headers
+        rezka.cookies.update(scraper.cookies.get_dict())
         
         if not rezka.ok:
             logger.error(f"Rezka object not OK: {rezka.exception}")
-            raise Exception(f"Rezka initialization failed: {rezka.exception}")
+            # Пробуем сменить зеркало/прокси
+            current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
+            scraper = create_new_scraper(force_rotate=True)
+            session = get_session()
+            return await get_stream(url, translator_id, season, episode, depth + 1)
 
         # 5. Получение потока
-        if "series" in str(rezka.type).lower():
-            s, e = season or "1", episode or "1"
-            logger.info(f"Fetching series stream: S{s}E{e}")
-            stream = rezka.getStream(s, e, translation=t_id)
-        else:
-            logger.info("Fetching movie stream")
-            stream = rezka.getStream(translation=t_id)
+        rezka_type = str(rezka.type).lower()
+        try:
+            if "series" in rezka_type or "tv_series" in rezka_type:
+                s, e = season or "1", episode or "1"
+                stream = rezka.getStream(s, e, translation=t_id)
+            else:
+                stream = rezka.getStream(translation=t_id)
+        except Exception as ge:
+            logger.error(f"getStream call failed: {ge}")
+            # Ротация при ошибке вызова
+            scraper = create_new_scraper(force_rotate=True)
+            session = get_session()
+            return await get_stream(url, translator_id, season, episode, depth + 1)
             
         if not stream or not hasattr(stream, 'videos') or not stream.videos:
-            logger.error(f"Stream empty or no videos. Stream object: {stream}")
-            raise Exception("Links not found in Rezka response")
+            logger.error(f"Stream empty or no videos. Attempting rotation.")
+            scraper = create_new_scraper(force_rotate=True)
+            session = get_session()
+            return await get_stream(url, translator_id, season, episode, depth + 1)
 
         return {
             "videos": stream.videos,
@@ -317,9 +340,11 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
         }
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
-        logger.error(f"Stream error detail: {error_details}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Stream error detail: {traceback.format_exc()}")
+        # Последняя попытка с новым прокси перед 500
+        scraper = create_new_scraper(force_rotate=True)
+        session = get_session()
+        return await get_stream(url, translator_id, season, episode, depth + 1)
 
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
