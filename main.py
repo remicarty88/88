@@ -1,6 +1,3 @@
-
-
-
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -277,14 +274,14 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
 
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
-    """Получение новинок с главной страницы с ротацией прокси при ошибках"""
+    """Получение новинок с ротацией прокси, ограничено для предотвращения 502 ошибки"""
     global session, scraper
     
-    if depth > 10: # Пробуем до 10 разных прокси
+    # Ограничиваем до 3 попыток, чтобы уложиться в лимит времени Railway
+    if depth > 3: 
         return []
 
     try:
-        # Формируем корректный URL
         base_origin = session.origin.rstrip('/')
         if category == "last":
             url = f"{base_origin}/page/{page}/" if page > 1 else f"{base_origin}/"
@@ -293,8 +290,8 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
             
         logger.info(f"Fetching [Attempt {depth}]: {url}")
         
-        # Используем глобальный scraper с увеличенным таймаутом
-        response = scraper.get(url, timeout=20, verify=False)
+        # Уменьшаем таймаут до 10 секунд
+        response = scraper.get(url, timeout=10, verify=False)
         
         if response.status_code == 200:
             # ... (парсинг)
@@ -362,3 +359,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
