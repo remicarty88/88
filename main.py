@@ -271,25 +271,42 @@ async def get_info(url: str = Query(...)):
 
 @app.get("/api/stream")
 async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
-    """Получение потока через cloudscraper"""
+    """Получение потока с прогревом Cookies для обхода защиты видео"""
+    global session, scraper
     try:
-        logger.info(f"Getting stream for: {url}, translator: {translator_id}, s: {season}, e: {episode}")
-        rezka = session.get(url)
-        
-        if "tv_series" in str(rezka.type):
-            if not season or not episode:
-                season, episode = "1", "1"
-            stream = rezka.getStream(season, episode, translation=translator_id)
-        else:
-            stream = rezka.getStream(translation=translator_id)
+        # 1. Формируем полный URL
+        full_url = url
+        if not url.startswith('http'):
+            full_url = session.origin.rstrip('/') + ("" if url.startswith('/') else "/") + url
             
+        logger.info(f"Stream request: {full_url}, translator: {translator_id}")
+        
+        # 2. Очищаем translator_id
+        t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
+        
+        # 3. ВАЖНО: Сначала заходим на страницу через scraper, чтобы получить Cookies
+        scraper.get(full_url, timeout=15)
+        
+        # 4. Обновляем сессию библиотеки и получаем видео
+        rezka = session.get(full_url)
+        rezka.session = scraper # Связываем с сессией, где есть куки
+        
+        if "series" in str(rezka.type).lower():
+            s, e = season or "1", episode or "1"
+            stream = rezka.getStream(s, e, translation=t_id)
+        else:
+            stream = rezka.getStream(translation=t_id)
+            
+        if not stream or not hasattr(stream, 'videos') or not stream.videos:
+            raise Exception("Links not found in Rezka response")
+
         return {
             "videos": stream.videos,
             "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
         }
     except Exception as e:
         logger.error(f"Stream error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=502, detail=f"Video Error: {str(e)}")
 
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
