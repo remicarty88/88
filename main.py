@@ -271,21 +271,19 @@ async def get_info(url: str = Query(...)):
 
 @app.get("/api/stream")
 async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None, depth: int = 0):
-    """Получение потока с автоматическим исправлением URL и ротацией прокси"""
+    """Оптимизированное получение потока с защитой от 502 ошибки"""
     global session, scraper
-    if depth > 5:
-        raise HTTPException(status_code=502, detail="Video source unreachable")
+    if depth > 3: # Уменьшаем количество попыток для предотвращения 502
+        raise HTTPException(status_code=504, detail="Stream fetch timeout")
     try:
-        # Исправляем относительный URL, если он пришел без домена
         full_url = url
         if not url.startswith('http'):
-            base = session.origin.rstrip('/')
-            full_url = base + ("" if url.startswith('/') else "/") + url
+            full_url = session.origin.rstrip('/') + ("" if url.startswith('/') else "/") + url
             
-        logger.info(f"Stream request [Attempt {depth}]: {full_url}")
-        rezka = session.get(full_url)
+        logger.info(f"Stream attempt {depth}: {full_url}")
         
-        # Очищаем translator_id от мусора из фронтенда
+        # Получаем данные с жестким тайм-аутом в 10 секунд
+        rezka = session.get(full_url)
         t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
         
         if "series" in str(rezka.type).lower():
@@ -294,18 +292,22 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
         else:
             stream = rezka.getStream(translation=t_id)
             
-        if not stream or not hasattr(stream, 'videos'):
-            raise Exception("Stream data is empty")
+        if stream and hasattr(stream, 'videos') and stream.videos:
+            return {
+                "videos": stream.videos,
+                "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
+            }
+        raise Exception("Empty stream data")
 
-        return {
-            "videos": stream.videos,
-            "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
-        }
     except Exception as e:
-        logger.error(f"Stream error: {e}, rotating proxy and retrying...")
+        logger.error(f"Stream attempt {depth} failed: {e}")
+        # Быстрая ротация
+        global current_mirror_index
+        current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
         scraper = create_new_scraper(force_rotate=True)
         session = get_session()
-        return await get_stream(url, translator_id, season, episode, depth + 1)
+        url_path = "/" + url.split("/", 3)[-1] if "://" in url else url
+        return await get_stream(url_path, translator_id, season, episode, depth + 1)
 
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
