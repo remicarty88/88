@@ -45,7 +45,7 @@ def get_random_proxy():
     return None
 
 def create_new_scraper():
-    """Создает новый экземпляр cloudscraper с использованием гарантированного рабочего прокси"""
+    """Создает новый экземпляр cloudscraper с поддержкой прокси через переменную окружения или файл"""
     s = cloudscraper.create_scraper(
         browser={
             'browser': 'chrome',
@@ -58,11 +58,17 @@ def create_new_scraper():
     s.verify = False
     s.trust_env = False
     
-    # Используем ваш рабочий прокси
-    proxy_url = os.environ.get("PROXY_URL") or "http://45.43.81.29:5676"
-    logger.info(f"Using guaranteed proxy: {proxy_url}")
+    # Сначала проверяем переменную окружения (приоритет)
+    proxy_url = os.environ.get("PROXY_URL")
     
-    s.proxies = {"http": proxy_url, "https": proxy_url}
+    # Если переменной нет, пробуем взять случайный из файла proxies.txt
+    if not proxy_url:
+        proxy_url = get_random_proxy()
+        
+    if proxy_url:
+        logger.info(f"Using proxy: {proxy_url}")
+        s.proxies = {"http": proxy_url, "https": proxy_url}
+            
     return s
 
 # Первоначальная настройка
@@ -357,3 +363,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
