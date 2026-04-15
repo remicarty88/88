@@ -271,33 +271,51 @@ async def get_info(url: str = Query(...)):
 
 @app.get("/api/stream")
 async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None, depth: int = 0):
-    """Получение потока с ротацией прокси при ошибках"""
+    """Получение потока с защитой от падения логики"""
     global session, scraper
     
     if depth > 5:
-        raise HTTPException(status_code=500, detail="Failed to get stream after multiple attempts")
+        raise HTTPException(status_code=503, detail="Rezka service unavailable after retries")
 
     try:
-        logger.info(f"Getting stream [Attempt {depth}]: {url}, translator: {translator_id}")
+        logger.info(f"Getting stream [Attempt {depth}]: {url}")
         
-        # Обновляем сессию перед получением стрима
-        rezka = session.get(url)
-        
-        if not rezka.ok:
-             logger.warning(f"Rezka object not OK, retrying with new proxy...")
+        # 1. Безопасное получение объекта Rezka
+        try:
+            rezka = session.get(url)
+        except Exception as e:
+            logger.error(f"Network error in session.get: {e}")
+            scraper = create_new_scraper(force_rotate=True)
+            session = get_session()
+            return await get_stream(url, translator_id, season, episode, depth + 1)
+
+        # 2. Проверка валидности объекта (вот тут чаще всего была 500 ошибка)
+        if not rezka or not hasattr(rezka, 'type'):
+             logger.warning("Rezka object is invalid or empty")
              scraper = create_new_scraper(force_rotate=True)
              session = get_session()
              return await get_stream(url, translator_id, season, episode, depth + 1)
 
-        if "tv_series" in str(rezka.type):
-            if not season or not episode:
-                season, episode = "1", "1"
-            stream = rezka.getStream(season, episode, translation=translator_id)
-        else:
-            stream = rezka.getStream(translation=translator_id)
+        # 3. Нормализация параметров (убираем "null" строки из фронтенда)
+        t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
+        
+        # 4. Логика получения стрима
+        try:
+            if "tv_series" in str(rezka.type).lower():
+                s = season if season else "1"
+                e = episode if episode else "1"
+                stream = rezka.getStream(s, e, translation=t_id)
+            else:
+                stream = rezka.getStream(translation=t_id)
+        except Exception as e:
+            logger.error(f"Library error in getStream: {e}")
+            scraper = create_new_scraper(force_rotate=True)
+            session = get_session()
+            return await get_stream(url, translator_id, season, episode, depth + 1)
             
+        # 5. Финальная проверка данных
         if not stream or not hasattr(stream, 'videos') or not stream.videos:
-            logger.warning("Stream empty or invalid, retrying with new proxy...")
+            logger.warning("No videos found in stream object")
             scraper = create_new_scraper(force_rotate=True)
             session = get_session()
             return await get_stream(url, translator_id, season, episode, depth + 1)
@@ -306,9 +324,9 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
             "videos": stream.videos,
             "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
         }
+
     except Exception as e:
-        logger.error(f"Stream error [Attempt {depth}]: {str(e)}")
-        # При любой сетевой ошибке меняем прокси и пробуем снова
+        logger.critical(f"Unhandled error in get_stream: {str(e)}")
         scraper = create_new_scraper(force_rotate=True)
         session = get_session()
         return await get_stream(url, translator_id, season, episode, depth + 1)
@@ -408,3 +426,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
