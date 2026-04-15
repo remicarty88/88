@@ -45,7 +45,7 @@ def get_random_proxy():
     return None
 
 def create_new_scraper():
-    """Создает новый экземпляр cloudscraper с поддержкой прокси и отключенным SSL"""
+    """Создает новый экземпляр cloudscraper с использованием гарантированного рабочего прокси"""
     s = cloudscraper.create_scraper(
         browser={
             'browser': 'chrome',
@@ -55,16 +55,14 @@ def create_new_scraper():
         }
     )
     
-    # КРИТИЧЕСКИ ВАЖНО: Отключаем все проверки SSL
     s.verify = False
-    # Исправляем ошибку "Cannot set verify_mode to CERT_NONE when check_hostname is enabled"
     s.trust_env = False
     
-    # Поддержка прокси
-    proxy_url = os.environ.get("PROXY_URL") or get_random_proxy()
-    if proxy_url:
-        s.proxies = {"http": proxy_url, "https": proxy_url}
-            
+    # Используем ваш рабочий прокси
+    proxy_url = os.environ.get("PROXY_URL") or "http://45.43.81.29:5676"
+    logger.info(f"Using guaranteed proxy: {proxy_url}")
+    
+    s.proxies = {"http": proxy_url, "https": proxy_url}
     return s
 
 # Первоначальная настройка
@@ -359,4 +357,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
