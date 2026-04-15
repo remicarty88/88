@@ -298,7 +298,7 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
     """Получение новинок с ротацией прокси, ограничено для предотвращения 502 ошибки"""
-    global session, scraper
+    global session, scraper, current_mirror_index
     
     # Ограничиваем до 3 попыток, чтобы уложиться в лимит времени Railway
     if depth > 3: 
@@ -372,6 +372,7 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
     except Exception as e:
         logger.error(f"Failed to fetch new content: {str(e)}")
         # При любой ошибке меняем прокси и пробуем снова
+        current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
         scraper = create_new_scraper(force_rotate=True)
         session = get_session()
         return await get_new(category, page, depth + 1)
