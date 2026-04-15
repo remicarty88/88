@@ -36,7 +36,7 @@ class SSLAdapter(HTTPAdapter):
         kwargs["assert_hostname"] = False
         return super().init_poolmanager(*args, **kwargs)
 
-# Список зеркал
+# Список максимально стабильных зеркал
 MIRRORS = [
     "https://hdrezka.ag/", 
     "https://rezka.ag/", 
@@ -44,7 +44,9 @@ MIRRORS = [
     "https://hdrezka.sh/",
     "https://hdrezka.website/",
     "https://hdrezka.ac/",
-    "https://hdrezka.lv/"
+    "https://hdrezka.lv/",
+    "https://hdrezka.ag.video/",
+    "https://hdrezka.cx/"
 ]
 current_mirror_index = 0
 
@@ -91,15 +93,27 @@ def create_new_scraper(force_rotate=False):
 scraper = create_new_scraper()
 
 def get_session(mirror_idx=None):
-    """Инициализация сессии HdRezkaApi"""
-    global current_mirror_index, scraper
+    """Инициализация сессии с получением Cookie для видео"""
+    global current_mirror_index
     idx = mirror_idx if mirror_idx is not None else current_mirror_index
     origin = MIRRORS[idx].rstrip('/')
-    logger.info(f"Using mirror: {origin}")
-    s = HdRezkaSession(origin)
-    s.session = create_new_scraper()
-    return s
+    logger.info(f"Connecting to Rezka mirror: {origin}")
+    
+    try:
+        # Сначала делаем "прогревочный" запрос для получения Cookie
+        s_raw = create_new_scraper()
+        s_raw.get(origin, timeout=10) # Заходим на главную
+        
+        s = HdRezkaSession(origin)
+        s.session = s_raw # Передаем сессию с Cookie в библиотеку
+        return s
+    except Exception as e:
+        logger.error(f"Failed to init session: {e}")
+        # Если не вышло с Cookie, пробуем обычный метод
+        return HdRezkaSession(origin)
 
+# Глобальные объекты
+scraper = create_new_scraper()
 session = get_session()
 
 app = FastAPI()
