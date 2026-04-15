@@ -5,6 +5,7 @@ import cloudscraper
 import time
 import random
 import ssl
+import urllib3
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -13,7 +14,10 @@ from urllib3.poolmanager import PoolManager
 from HdRezkaApi import HdRezkaApi, HdRezkaSession
 from HdRezkaApi.search import HdRezkaSearch
 
-# Глобальный патч для SSL (решает проблему check_hostname в Python 3.12+)
+# Отключаем ворнинги SSL, чтобы не забивать логи
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Глобальный патч для SSL
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -25,14 +29,14 @@ else:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Кастомный адаптер для полного отключения проверок SSL в requests
+# Кастомный адаптер для полного отключения проверок SSL
 class SSLAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         kwargs["cert_reqs"] = ssl.CERT_NONE
         kwargs["assert_hostname"] = False
         return super().init_poolmanager(*args, **kwargs)
 
-# Список максимально стабильных зеркал
+# Список зеркал
 MIRRORS = [
     "https://hdrezka.ag/", 
     "https://rezka.ag/", 
@@ -45,59 +49,54 @@ MIRRORS = [
 current_mirror_index = 0
 
 def get_random_proxy():
-    """Читает список прокси из одного файла и выбирает случайный"""
+    """Выбор прокси из файла"""
     try:
         proxy_file = "proxies.txt"
         if os.path.exists(proxy_file):
             with open(proxy_file, 'r') as f:
                 proxies = [line.strip() for line in f if line.strip()]
                 if proxies:
-                    proxy = random.choice(proxies)
-                    logger.info(f"Selected random proxy: {proxy}")
-                    return proxy
-    except Exception as e:
-        logger.error(f"Error loading proxies: {e}")
+                    return random.choice(proxies)
+    except:
+        pass
     return None
 
-def create_new_scraper():
-    """Создает сессию с поддержкой прокси и принудительным отключением SSL-проверок"""
+def create_new_scraper(force_rotate=False):
+    """Создает сессию с поддержкой прокси и автоматической ротацией при ошибках"""
     s = requests.Session()
-    
-    # Монтируем кастомный адаптер для игнорирования всех SSL-ошибок
     adapter = SSLAdapter()
     s.mount("https://", adapter)
     s.mount("http://", adapter)
     
-    # КРИТИЧЕСКИЙ ФИКС
     s.verify = False
     s.trust_env = False
     
-    # Имитация браузера через cloudscraper (только для решения JS-челленджей если нужно)
-    # Но сейчас мы используем чистый requests для обхода SSL-ошибок
     s.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Connection': 'keep-alive',
     })
     
-    # Поддержка прокси
-    proxy_url = os.environ.get("PROXY_URL") or get_random_proxy()
+    # Если принудительная ротация или прокси не задан в переменных - берем из файла
+    proxy_url = os.environ.get("PROXY_URL")
+    if not proxy_url or force_rotate:
+        proxy_url = get_random_proxy()
+        
     if proxy_url:
         logger.info(f"Using proxy: {proxy_url}")
         s.proxies = {"http": proxy_url, "https": proxy_url}
-            
     return s
 
-# Первоначальная настройка
 scraper = create_new_scraper()
 
 def get_session(mirror_idx=None):
-    """Создает сессию с поддержкой cloudscraper, прокси и ротацией зеркал"""
+    """Инициализация сессии HdRezkaApi"""
     global current_mirror_index, scraper
     idx = mirror_idx if mirror_idx is not None else current_mirror_index
     origin = MIRRORS[idx].rstrip('/')
     logger.info(f"Using mirror: {origin}")
     s = HdRezkaSession(origin)
-    # Используем текущий глобальный скрейпер или создаем новый
     s.session = create_new_scraper()
     return s
 
@@ -310,8 +309,8 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
             
         logger.info(f"Fetching [Attempt {depth}]: {url}")
         
-        # Уменьшаем таймаут до 10 секунд
-        response = scraper.get(url, timeout=10, verify=False)
+        # Увеличиваем таймаут до 30 секунд для медленных прокси
+        response = scraper.get(url, timeout=30, verify=False)
         
         if response.status_code == 200:
             # ... (парсинг)
@@ -356,20 +355,20 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
         if response.status_code == 403:
             logger.warning(f"Mirror {session.origin} returned 403, rotating mirror and proxy...")
             current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
-            scraper = create_new_scraper()
+            scraper = create_new_scraper(force_rotate=True)
             session = get_session()
             return await get_new(category, page, depth + 1)
         
         # Если другой плохой статус
         logger.warning(f"Bad status {response.status_code}, retrying with new proxy...")
-        scraper = create_new_scraper()
+        scraper = create_new_scraper(force_rotate=True)
         session = get_session()
         return await get_new(category, page, depth + 1)
 
     except Exception as e:
         logger.error(f"Failed to fetch new content: {str(e)}")
-        # При любой ошибке (SSL, Connection, Timeout) меняем прокси и пробуем снова
-        scraper = create_new_scraper()
+        # При любой ошибке меняем прокси и пробуем снова
+        scraper = create_new_scraper(force_rotate=True)
         session = get_session()
         return await get_new(category, page, depth + 1)
 
