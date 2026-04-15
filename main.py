@@ -48,8 +48,21 @@ MIRRORS = [
 ]
 current_mirror_index = 0
 
+def get_random_proxy():
+    """Выбор прокси из файла"""
+    try:
+        proxy_file = "proxies.txt"
+        if os.path.exists(proxy_file):
+            with open(proxy_file, 'r') as f:
+                proxies = [line.strip() for line in f if line.strip()]
+                if proxies:
+                    return random.choice(proxies)
+    except:
+        pass
+    return None
+
 def create_new_scraper():
-    """Создает сессию только с вашим быстрым прокси из Railway"""
+    """Создает сессию с поддержкой прокси и имитацией браузера"""
     s = requests.Session()
     adapter = SSLAdapter()
     s.mount("https://", adapter)
@@ -62,35 +75,27 @@ def create_new_scraper():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Connection': 'keep-alive',
     })
     
-    # Используем ТОЛЬКО PROXY_URL из Railway
-    proxy_url = os.environ.get("PROXY_URL")
+    proxy_url = os.environ.get("PROXY_URL") or get_random_proxy()
     if proxy_url:
-        logger.info(f"Using fast proxy: {proxy_url}")
+        logger.info(f"Using proxy: {proxy_url}")
         s.proxies = {"http": proxy_url, "https": proxy_url}
-    else:
-        logger.warning("WARNING: PROXY_URL is not set in Railway variables!")
-            
     return s
 
+scraper = create_new_scraper()
+
 def get_session(mirror_idx=None):
-    """Инициализация сессии с вашим прокси"""
-    global current_mirror_index
+    """Инициализация сессии HdRezkaApi"""
+    global current_mirror_index, scraper
     idx = mirror_idx if mirror_idx is not None else current_mirror_index
     origin = MIRRORS[idx].rstrip('/')
-    logger.info(f"Connecting to Rezka mirror: {origin}")
-    
-    try:
-        s = HdRezkaSession(origin)
-        s.session = create_new_scraper()
-        return s
-    except Exception as e:
-        logger.error(f"Failed to init session: {e}")
-        return None
+    logger.info(f"Using mirror: {origin}")
+    s = HdRezkaSession(origin)
+    s.session = create_new_scraper()
+    return s
 
-# Глобальные объекты
-scraper = create_new_scraper()
 session = get_session()
 
 app = FastAPI()
@@ -261,66 +266,26 @@ async def get_info(url: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/stream")
-async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None, depth: int = 0):
-    """Получение потока с защитой от падения логики"""
-    global session, scraper
-    
-    if depth > 5:
-        raise HTTPException(status_code=503, detail="Rezka service unavailable after retries")
-
+async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
+    """Получение потока через cloudscraper"""
     try:
-        logger.info(f"Getting stream [Attempt {depth}]: {url}")
+        logger.info(f"Getting stream for: {url}, translator: {translator_id}, s: {season}, e: {episode}")
+        rezka = session.get(url)
         
-        # 1. Безопасное получение объекта Rezka
-        try:
-            rezka = session.get(url)
-        except Exception as e:
-            logger.error(f"Network error in session.get: {e}")
-            scraper = create_new_scraper(force_rotate=True)
-            session = get_session()
-            return await get_stream(url, translator_id, season, episode, depth + 1)
-
-        # 2. Проверка валидности объекта (вот тут чаще всего была 500 ошибка)
-        if not rezka or not hasattr(rezka, 'type'):
-             logger.warning("Rezka object is invalid or empty")
-             scraper = create_new_scraper(force_rotate=True)
-             session = get_session()
-             return await get_stream(url, translator_id, season, episode, depth + 1)
-
-        # 3. Нормализация параметров (убираем "null" строки из фронтенда)
-        t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
-        
-        # 4. Логика получения стрима
-        try:
-            if "tv_series" in str(rezka.type).lower():
-                s = season if season else "1"
-                e = episode if episode else "1"
-                stream = rezka.getStream(s, e, translation=t_id)
-            else:
-                stream = rezka.getStream(translation=t_id)
-        except Exception as e:
-            logger.error(f"Library error in getStream: {e}")
-            scraper = create_new_scraper(force_rotate=True)
-            session = get_session()
-            return await get_stream(url, translator_id, season, episode, depth + 1)
+        if "tv_series" in str(rezka.type):
+            if not season or not episode:
+                season, episode = "1", "1"
+            stream = rezka.getStream(season, episode, translation=translator_id)
+        else:
+            stream = rezka.getStream(translation=translator_id)
             
-        # 5. Финальная проверка данных
-        if not stream or not hasattr(stream, 'videos') or not stream.videos:
-            logger.warning("No videos found in stream object")
-            scraper = create_new_scraper(force_rotate=True)
-            session = get_session()
-            return await get_stream(url, translator_id, season, episode, depth + 1)
-
         return {
             "videos": stream.videos,
             "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
         }
-
     except Exception as e:
-        logger.critical(f"Unhandled error in get_stream: {str(e)}")
-        scraper = create_new_scraper(force_rotate=True)
-        session = get_session()
-        return await get_stream(url, translator_id, season, episode, depth + 1)
+        logger.error(f"Stream error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
@@ -340,8 +305,8 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
             
         logger.info(f"Fetching [Attempt {depth}]: {url}")
         
-        # Увеличиваем таймаут до 30 секунд для медленных прокси
-        response = scraper.get(url, timeout=30, verify=False)
+        # Уменьшаем таймаут до 10 секунд
+        response = scraper.get(url, timeout=10, verify=False)
         
         if response.status_code == 200:
             # ... (парсинг)
@@ -386,20 +351,20 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
         if response.status_code == 403:
             logger.warning(f"Mirror {session.origin} returned 403, rotating mirror and proxy...")
             current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
-            scraper = create_new_scraper(force_rotate=True)
+            scraper = create_new_scraper()
             session = get_session()
             return await get_new(category, page, depth + 1)
         
         # Если другой плохой статус
         logger.warning(f"Bad status {response.status_code}, retrying with new proxy...")
-        scraper = create_new_scraper(force_rotate=True)
+        scraper = create_new_scraper()
         session = get_session()
         return await get_new(category, page, depth + 1)
 
     except Exception as e:
         logger.error(f"Failed to fetch new content: {str(e)}")
-        # При любой ошибке меняем прокси и пробуем снова
-        scraper = create_new_scraper(force_rotate=True)
+        # При любой ошибке (SSL, Connection, Timeout) меняем прокси и пробуем снова
+        scraper = create_new_scraper()
         session = get_session()
         return await get_new(category, page, depth + 1)
 
