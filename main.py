@@ -269,55 +269,27 @@ async def get_info(url: str = Query(...)):
         logger.error(f"Info error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Глобальные кэши
-INFO_CACHE = {}
-STREAM_CACHE = {}
-
 @app.get("/api/stream")
 async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
-    """Получение потока с кэшированием для высокой производительности"""
-    global session, scraper, STREAM_CACHE
-    
-    # Ключ кэша зависит от всех параметров
-    cache_key = f"{url}_{translator_id}_{season}_{episode}"
-    if cache_key in STREAM_CACHE:
-        cached_time, data = STREAM_CACHE[cache_key]
-        if time.time() - cached_time < 7200: # Ссылка живет 2 часа
-            return data
-
+    """Получение потока через cloudscraper"""
     try:
-        full_url = url
-        if not url.startswith('http'):
-            full_url = session.origin.rstrip('/') + ("" if url.startswith('/') else "/") + url
-            
-        logger.info(f"Fetching stream: {full_url}")
-        t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
+        logger.info(f"Getting stream for: {url}, translator: {translator_id}, s: {season}, e: {episode}")
+        rezka = session.get(url)
         
-        # Прогрев и получение данных
-        scraper.get(full_url, timeout=15)
-        rezka = session.get(full_url)
-        rezka.session = scraper 
-        
-        if "series" in str(rezka.type).lower():
-            s, e = season or "1", episode or "1"
-            stream = rezka.getStream(s, e, translation=t_id)
+        if "tv_series" in str(rezka.type):
+            if not season or not episode:
+                season, episode = "1", "1"
+            stream = rezka.getStream(season, episode, translation=translator_id)
         else:
-            stream = rezka.getStream(translation=t_id)
+            stream = rezka.getStream(translation=translator_id)
             
-        if not stream or not hasattr(stream, 'videos') or not stream.videos:
-            raise Exception("No videos found")
-
-        result = {
+        return {
             "videos": stream.videos,
             "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
         }
-        
-        # Сохраняем в кэш
-        STREAM_CACHE[cache_key] = (time.time(), result)
-        return result
     except Exception as e:
-        logger.error(f"Stream error: {e}")
-        raise HTTPException(status_code=502, detail="Failed to fetch video")
+        logger.error(f"Stream error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/new")
 async def get_new(category: str = "last", page: int = 1, depth: int = 0):
