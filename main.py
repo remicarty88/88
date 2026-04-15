@@ -60,6 +60,9 @@ def create_new_scraper():
         }
     )
     
+    # Отключаем проверку SSL для прокси, чтобы избежать SSLV3_ALERT_HANDSHAKE_FAILURE
+    s.verify = False
+    
     # Сначала проверяем переменную окружения (приоритет)
     proxy_url = os.environ.get("PROXY_URL")
     
@@ -68,43 +71,39 @@ def create_new_scraper():
         proxy_url = get_random_proxy()
         
     if proxy_url:
-        # Для SOCKS нужно указывать протокол правильно
-        if proxy_url.startswith('socks'):
-            s.proxies = {"http": proxy_url, "https": proxy_url}
-        else:
-            # Для HTTP/HTTPS
-            s.proxies = {"http": proxy_url, "https": proxy_url}
+        s.proxies = {"http": proxy_url, "https": proxy_url}
             
     return s
 
 def get_session(mirror_idx=None):
     """Создает сессию с поддержкой cloudscraper, прокси и ротацией зеркал"""
-    global current_mirror_index
+    global current_mirror_index, scraper
     idx = mirror_idx if mirror_idx is not None else current_mirror_index
     origin = MIRRORS[idx].rstrip('/')
     logger.info(f"Using mirror: {origin}")
     s = HdRezkaSession(origin)
+    # Используем текущий глобальный скрейпер или создаем новый
     s.session = create_new_scraper()
     return s
 
-# Инициализация первой сессии
 session = get_session()
 
 app = FastAPI()
 
 @app.get("/api/search")
 async def search(query: str = Query(...), depth: int = 0):
-    """Поиск фильмов с глубокой имитацией и ротацией зеркал"""
+    """Поиск фильмов с глубокой имитацией и ротацией прокси при ошибках"""
     global session, current_mirror_index, scraper
     
-    if depth > 3: # Защита от бесконечной рекурсии
+    if depth > 5: # Увеличим глубину попыток
         return []
 
-    logger.info(f"Searching for: '{query}' [Depth: {depth}] using mirror: {session.origin}")
+    logger.info(f"Searching for: '{query}' [Attempt: {depth}] using mirror: {session.origin}")
     
     try:
-        # 1. Простой поиск через библиотеку
+        # Пробуем выполнить поиск
         results_list = []
+        # ... (код поиска остается прежним)
         try:
             search_results = session.search(query)
             if hasattr(search_results, 'all'):
@@ -279,23 +278,28 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/new")
-async def get_new(category: str = "last", page: int = 1):
-    """Получение новинок с главной страницы с поддержкой пагинации и категорий"""
+async def get_new(category: str = "last", page: int = 1, depth: int = 0):
+    """Получение новинок с главной страницы с ротацией прокси при ошибках"""
     global session, scraper
+    
+    if depth > 10: # Пробуем до 10 разных прокси
+        return []
+
     try:
-        # Формируем корректный URL для разных типов категорий
+        # Формируем корректный URL
         base_origin = session.origin.rstrip('/')
-        
         if category == "last":
             url = f"{base_origin}/page/{page}/" if page > 1 else f"{base_origin}/"
         else:
-            # Если категория содержит '/', например 'films/2025'
             url = f"{base_origin}/{category}/page/{page}/"
             
-        logger.info(f"Fetching content from: {url}")
-        response = scraper.get(url, timeout=15)
+        logger.info(f"Fetching [Attempt {depth}]: {url}")
+        
+        # Используем глобальный scraper
+        response = scraper.get(url, timeout=10, verify=False)
         
         if response.status_code == 200:
+            # ... (парсинг)
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             items = soup.find_all('div', class_='b-content__inline_item')
@@ -332,10 +336,19 @@ async def get_new(category: str = "last", page: int = 1):
                     logger.error(f"Error parsing item: {e}")
                     continue
             return results
-        return []
+        
+        # Если статус не 200, пробуем другой прокси
+        logger.warning(f"Bad status {response.status_code}, retrying with new proxy...")
+        scraper = create_new_scraper()
+        session = get_session()
+        return await get_new(category, page, depth + 1)
+
     except Exception as e:
         logger.error(f"Failed to fetch new content: {str(e)}")
-        return []
+        # При любой ошибке (SSL, Connection, Timeout) меняем прокси и пробуем снова
+        scraper = create_new_scraper()
+        session = get_session()
+        return await get_new(category, page, depth + 1)
 
 # Статические файлы (фронтенд)
 if not os.path.exists("static"):
@@ -351,3 +364,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
