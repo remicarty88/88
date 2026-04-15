@@ -45,7 +45,7 @@ def get_random_proxy():
     return None
 
 def create_new_scraper():
-    """Создает новый экземпляр cloudscraper с поддержкой прокси через переменную окружения или файл"""
+    """Создает новый экземпляр cloudscraper с поддержкой прокси и исправлением SSL"""
     s = cloudscraper.create_scraper(
         browser={
             'browser': 'chrome',
@@ -55,13 +55,21 @@ def create_new_scraper():
         }
     )
     
+    # КРИТИЧЕСКИЙ ФИКС ДЛЯ PYTHON 3.12+
+    # Отключаем проверку SSL и имен хостов для прокси
     s.verify = False
     s.trust_env = False
     
-    # Сначала проверяем переменную окружения (приоритет)
+    # Принудительно отключаем проверку в адаптерах
+    for adapter in s.adapters.values():
+        if hasattr(adapter, "poolmanager"):
+            adapter.poolmanager.connection_pool_kw["cert_reqs"] = "CERT_NONE"
+            adapter.poolmanager.connection_pool_kw["assert_hostname"] = False
+    
+    # Поддержка прокси через переменную окружения или захардкоженный вариант
     proxy_url = os.environ.get("PROXY_URL")
     
-    # Если переменной нет, пробуем взять случайный из файла proxies.txt
+    # Если переменной нет, пробуем взять случайный из файла
     if not proxy_url:
         proxy_url = get_random_proxy()
         
