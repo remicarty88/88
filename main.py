@@ -1,415 +1,160 @@
 import logging
 import os
 import requests
-import cloudscraper
 import time
-import random
 import ssl
 import urllib3
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
+from bs4 import BeautifulSoup
 from HdRezkaApi import HdRezkaApi, HdRezkaSession
-from HdRezkaApi.search import HdRezkaSearch
 
-# Отключаем ворнинги SSL, чтобы не забивать логи
+# Отключаем ворнинги SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Глобальный патч для SSL
 try:
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
+    ssl._create_default_https_context = ssl._create_unverified_context
+except:
     pass
-else:
-    ssl._create_default_https_context = _create_unverified_https_context
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Кастомный адаптер для полного отключения проверок SSL
+# Адаптер для обхода проверок SSL
 class SSLAdapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
         kwargs["cert_reqs"] = ssl.CERT_NONE
         kwargs["assert_hostname"] = False
         return super().init_poolmanager(*args, **kwargs)
 
-# Список актуальных рабочих зеркал
+# Рабочие зеркала
 MIRRORS = [
-    "https://hdrezka.ag/", 
-    "https://rezka.ag/", 
-    "https://hdrezka.me/", 
-    "https://hdrezka.sh/",
-    "https://hdrezka.website/",
-    "https://hdrezka.lv/",
-    "https://hdrezka.cx/"
+    "https://hdrezka.ag/", "https://rezka.ag/", "https://hdrezka.me/", 
+    "https://hdrezka.sh/", "https://hdrezka.website/", "https://hdrezka.lv/"
 ]
-current_mirror_index = 0
 
-def get_random_proxy():
-    """Выбор прокси из файла"""
-    try:
-        proxy_file = "proxies.txt"
-        if os.path.exists(proxy_file):
-            with open(proxy_file, 'r') as f:
-                proxies = [line.strip() for line in f if line.strip()]
-                if proxies:
-                    return random.choice(proxies)
-    except:
-        pass
-    return None
-
-def create_new_scraper(force_rotate=False):
-    """Создает сессию с поддержкой прокси и автоматической ротацией при ошибках"""
+def create_scraper():
+    """Создает сессию с поддержкой прокси и имитацией браузера"""
     s = requests.Session()
     adapter = SSLAdapter()
     s.mount("https://", adapter)
     s.mount("http://", adapter)
-    
     s.verify = False
-    s.trust_env = False
     
     s.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Connection': 'keep-alive',
     })
     
-    # Если принудительная ротация или прокси не задан в переменных - берем из файла
-    proxy_url = os.environ.get("PROXY_URL")
-    if not proxy_url or force_rotate:
-        proxy_url = get_random_proxy()
-        
-    if proxy_url:
-        logger.info(f"Using proxy: {proxy_url}")
-        s.proxies = {"http": proxy_url, "https": proxy_url}
+    proxy = os.environ.get("PROXY_URL")
+    if proxy:
+        logger.info(f"Using proxy: {proxy}")
+        s.proxies = {"http": proxy, "https": proxy}
     return s
-
-scraper = create_new_scraper()
-
-def get_session(mirror_idx=None):
-    """Инициализация сессии HdRezkaApi с ленивой загрузкой"""
-    global current_mirror_index
-    idx = mirror_idx if mirror_idx is not None else current_mirror_index
-    origin = MIRRORS[idx].rstrip('/')
-    logger.info(f"Targeting mirror: {origin}")
-    
-    # Создаем сессию БЕЗ предварительного прогревочного запроса для быстрого старта
-    s = HdRezkaSession(origin)
-    s.session = create_new_scraper()
-    return s
-
-# Быстрая инициализация глобальных объектов
-scraper = create_new_scraper()
-session = get_session()
 
 app = FastAPI()
 
 @app.get("/api/search")
-async def search(query: str = Query(...), depth: int = 0):
-    """Поиск фильмов с глубокой имитацией и ротацией прокси при ошибках"""
-    global session, current_mirror_index, scraper
-    
-    if depth > 5: # Увеличим глубину попыток
-        return []
-
-    logger.info(f"Searching for: '{query}' [Attempt: {depth}] using mirror: {session.origin}")
-    
+async def search(query: str = Query(...)):
     try:
-        # Пробуем выполнить поиск
-        results_list = []
-        # ... (код поиска остается прежним)
-        try:
-            search_results = session.search(query)
-            if hasattr(search_results, 'all'):
-                results_list = search_results.all
-            elif isinstance(search_results, list):
-                results_list = search_results
-        except:
-            pass
-
-        # 2. Прямой AJAX поиск
-        if not results_list:
-            ajax_url = f"{session.origin.rstrip('/')}/engine/ajax/search.php"
-            response = scraper.get(ajax_url, params={'q': query}, timeout=15)
-            
-            if response.status_code == 200 and response.text:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(response.text, 'html.parser')
-                items = soup.find_all('li')
-                for item in items:
-                    link_tag = item.find('a')
-                    if link_tag:
-                        title = link_tag.find('span', class_='title').text if link_tag.find('span', class_='title') else link_tag.text
-                        url = link_tag['href']
-                        if not url.startswith('http'):
-                            url = session.origin.rstrip('/') + url
-                        
-                    # Попробуем найти изображение
-                        image_url = None
-                        
-                        # 1. Проверяем тег img
-                        img_tag = item.find('img')
-                        if img_tag:
-                            image_url = img_tag.get('src') or img_tag.get('data-src') or img_tag.get('data-original')
-                        
-                        # 2. Если не нашли, ищем в стиле background-image
-                        if not image_url:
-                            elements_with_style = item.find_all(lambda tag: tag.has_attr('style') and 'background-image' in tag['style'])
-                            if item.has_attr('style') and 'background-image' in item['style']:
-                                elements_with_style.insert(0, item)
-                                
-                            for el in elements_with_style:
-                                import re
-                                match = re.search(r'url\((.*?)\)', el['style'])
-                                if match:
-                                    image_url = match.group(1).strip("'\" ")
-                                    break
-                        
-                        # 3. Если все еще не нашли, попробуем найти по классу
-                        if not image_url:
-                            import re
-                            pic_div = item.find(class_=re.compile("picture|image|thumb|cell-img"))
-                            if pic_div and pic_div.find('img'):
-                                img = pic_div.find('img')
-                                image_url = img.get('src') or img.get('data-src')
-
-                        # Очистка и нормализация URL
-                        if image_url:
-                            image_url = image_url.strip()
-                            # Принудительно очищаем от лишних кавычек и пробелов
-                            image_url = image_url.replace('"', '').replace("'", "").strip()
-                            
-                            # Исправление протоколов и доменов
-                            if image_url.startswith('//'):
-                                image_url = 'https:' + image_url
-                            elif not image_url.startswith('http'):
-                                # Если путь относительный, добавляем текущее зеркало
-                                origin = session.origin.rstrip('/')
-                                if not image_url.startswith('/'):
-                                    image_url = '/' + image_url
-                                image_url = origin + image_url
-                            
-                            # Принудительно меняем http на https для CDN rezka
-                            if 'hdrezka' in image_url or 'rezka' in image_url:
-                                image_url = image_url.replace('http://', 'https://')
-                        
-                        results.append({
-                            "title": title.strip(), "url": url,
-                            "rating": item.find('span', class_='rating').text if item.find('span', class_='rating') else "-",
-                            "category": item.find('span', class_='info').text if item.find('span', class_='info') else "Found via AJAX",
-                            "image": image_url
-                        })
-
-                results_list = results
-
-        # 3. Если всё еще пусто, меняем зеркало и скрейпер
-        if not results_list:
-            current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
-            scraper = create_new_scraper() # Новый отпечаток браузера
-            session = get_session()
-            return await search(query, depth + 1)
-
-        return results_list
-        
+        s = create_scraper()
+        rezka_session = HdRezkaSession(MIRRORS[0])
+        rezka_session.session = s
+        results = rezka_session.search(query)
+        return results.all if hasattr(results, 'all') else results
     except Exception as e:
-        logger.error(f"Search failed: {str(e)}")
-        if "Connection" in str(e) or "reset" in str(e):
-            current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
-            session = get_session()
-            return await search(query, depth + 1)
-        return []
-
-# Глобальный кэш для обложек и инфо
-INFO_CACHE = {}
+        logger.error(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/info")
 async def get_info(url: str = Query(...)):
-    """Получение информации с кэшированием"""
-    global INFO_CACHE
-    
-    if url in INFO_CACHE:
-        # Если данные свежие (меньше 1 часа), отдаем из кэша
-        cached_time, data = INFO_CACHE[url]
-        if time.time() - cached_time < 3600:
-            return data
-
     try:
-        logger.info(f"Getting info for: {url}")
-        rezka = session.get(url)
-        
-        if not rezka.ok:
-            # Если в кэше есть старые данные, отдаем их при ошибке
-            if url in INFO_CACHE:
-                return INFO_CACHE[url][1]
-            raise HTTPException(status_code=400, detail=str(rezka.exception))
-
+        s = create_scraper()
+        rezka_session = HdRezkaSession(MIRRORS[0])
+        rezka_session.session = s
+        rezka = rezka_session.get(url)
         info = {
             "title": rezka.name,
             "poster": rezka.thumbnail,
-            "poster_hq": rezka.thumbnailHQ if hasattr(rezka, 'thumbnailHQ') else rezka.thumbnail,
             "type": str(rezka.type),
             "translators": rezka.translators_names,
             "description": rezka.description,
             "rating": rezka.rating.value if hasattr(rezka, 'rating') else "-"
         }
-
-        # Принудительно собираем информацию о сериях для всех переводчиков
-        if "tv_series" in str(rezka.type).lower() or "series" in str(rezka.type).lower():
-            try:
-                # Библиотека HdRezkaApi имеет свойство seriesInfo, которое делает запросы
-                info["seriesInfo"] = rezka.seriesInfo
-            except Exception as e:
-                logger.error(f"Error fetching seriesInfo: {e}")
-                info["seriesInfo"] = {}
-        
-        # Сохраняем в кэш
-        INFO_CACHE[url] = (time.time(), info)
+        if "series" in str(rezka.type).lower():
+            info["seriesInfo"] = rezka.seriesInfo
         return info
     except Exception as e:
-        logger.error(f"Info error: {str(e)}")
+        logger.error(f"Info error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/stream")
-async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None, depth: int = 0):
-    """Оптимизированное получение потока с защитой от 502 ошибки"""
-    global session, scraper
-    if depth > 3: # Уменьшаем количество попыток для предотвращения 502
-        raise HTTPException(status_code=504, detail="Stream fetch timeout")
+async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
     try:
-        full_url = url
         if not url.startswith('http'):
-            full_url = session.origin.rstrip('/') + ("" if url.startswith('/') else "/") + url
+            url = MIRRORS[0].rstrip('/') + ("" if url.startswith('/') else "/") + url
             
-        logger.info(f"Stream attempt {depth}: {full_url}")
+        s = create_scraper()
+        rezka_session = HdRezkaSession(MIRRORS[0])
+        rezka_session.session = s
+        rezka = rezka_session.get(url)
         
-        # Увеличиваем таймаут до 60 секунд для медленных SOCKS прокси
-        try:
-            rezka = session.get(full_url)
-        except Exception as e:
-            logger.error(f"Network error in session.get: {e}")
-            raise e
         t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
         
         if "series" in str(rezka.type).lower():
-            s, e = season or "1", episode or "1"
-            stream = rezka.getStream(s, e, translation=t_id)
+            stream = rezka.getStream(season or "1", episode or "1", translation=t_id)
         else:
             stream = rezka.getStream(translation=t_id)
             
-        if stream and hasattr(stream, 'videos') and stream.videos:
-            return {
-                "videos": stream.videos,
-                "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
-            }
-        raise Exception("Empty stream data")
-
+        return {
+            "videos": stream.videos if stream else {},
+            "subtitles": stream.subtitles.subtitles if stream and hasattr(stream, 'subtitles') and stream.subtitles else None
+        }
     except Exception as e:
-        logger.error(f"Stream attempt {depth} failed: {e}")
-        # Быстрая ротация
-        global current_mirror_index
-        current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
-        scraper = create_new_scraper(force_rotate=True)
-        session = get_session()
-        url_path = "/" + url.split("/", 3)[-1] if "://" in url else url
-        return await get_stream(url_path, translator_id, season, episode, depth + 1)
+        logger.error(f"Stream error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/new")
-async def get_new(category: str = "last", page: int = 1, depth: int = 0):
-    """Получение новинок с ротацией прокси, ограничено для предотвращения 502 ошибки"""
-    global session, scraper
-    
-    # Ограничиваем до 3 попыток, чтобы уложиться в лимит времени Railway
-    if depth > 3: 
-        return []
-
+async def get_new(category: str = "last", page: int = 1):
     try:
-        base_origin = session.origin.rstrip('/')
-        if category == "last":
-            url = f"{base_origin}/page/{page}/" if page > 1 else f"{base_origin}/"
-        else:
-            url = f"{base_origin}/{category}/page/{page}/"
-            
-        logger.info(f"Fetching [Attempt {depth}]: {url}")
+        s = create_scraper()
+        base = MIRRORS[0].rstrip('/')
+        url = f"{base}/page/{page}/" if category == "last" else f"{base}/{category}/page/{page}/"
         
-        # Увеличиваем таймаут до 30 секунд для медленных прокси
-        response = scraper.get(url, timeout=30, verify=False)
-        
-        if response.status_code == 200:
-            # ... (парсинг)
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(response.text, 'html.parser')
-            items = soup.find_all('div', class_='b-content__inline_item')
-            results = []
-            
-            for item in items:
-                try:
-                    link_container = item.find('div', class_='b-content__inline_item-link')
-                    if not link_container: continue
-                    
-                    link = link_container.find('a')
-                    img = item.find('img')
-                    
-                    # Извлечение рейтинга
-                    rating = "-"
-                    rating_el = item.find('span', class_='rating')
-                    if rating_el:
-                        rating = rating_el.text.strip()
-                    
-                    # Извлечение категории/сущности
-                    entity = "Видео"
-                    entity_el = item.find('i', class_='entity')
-                    if entity_el:
-                        entity = entity_el.text.strip()
+        response = s.get(url, timeout=45)
+        if response.status_code != 200: return []
 
-                    results.append({
-                        "title": link.text.strip(),
-                        "url": link['href'],
-                        "image": img.get('src') if img else None,
-                        "rating": rating,
-                        "category": entity
-                    })
-                except Exception as e:
-                    logger.error(f"Error parsing item: {e}")
-                    continue
-            return results
-        
-        # Если статус 403, пробуем другое зеркало и новый прокси
-        if response.status_code == 403:
-            logger.warning(f"Mirror {session.origin} returned 403, rotating mirror and proxy...")
-            current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
-            scraper = create_new_scraper(force_rotate=True)
-            session = get_session()
-            return await get_new(category, page, depth + 1)
-        
-        # Если другой плохой статус
-        logger.warning(f"Bad status {response.status_code}, retrying with new proxy...")
-        scraper = create_new_scraper(force_rotate=True)
-        session = get_session()
-        return await get_new(category, page, depth + 1)
-
+        soup = BeautifulSoup(response.text, 'html.parser')
+        items = soup.find_all('div', class_='b-content__inline_item')
+        results = []
+        for item in items:
+            try:
+                link_el = item.find('div', class_='b-content__inline_item-link').find('a')
+                img_el = item.find('img')
+                results.append({
+                    "title": link_el.text.strip(),
+                    "url": link_el['href'],
+                    "image": img_el.get('src') if img_el else None,
+                    "rating": item.find('span', class_='rating').text.strip() if item.find('span', class_='rating') else "-",
+                    "category": item.find('i', class_='entity').text.strip() if item.find('i', class_='entity') else "Видео"
+                })
+            except: continue
+        return results
     except Exception as e:
-        logger.error(f"Failed to fetch new content: {str(e)}")
-        # При любой ошибке меняем прокси и пробуем снова
-        scraper = create_new_scraper(force_rotate=True)
-        session = get_session()
-        return await get_new(category, page, depth + 1)
+        logger.error(f"New list error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Статические файлы (фронтенд)
-if not os.path.exists("static"):
-    os.makedirs("static")
-
+# Статические файлы
+if not os.path.exists("static"): os.makedirs("static")
 @app.get("/")
-async def read_index():
-    return FileResponse('static/index.html')
-
+async def read_index(): return FileResponse('static/index.html')
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
     
