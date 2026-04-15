@@ -35,6 +35,16 @@ MIRRORS = [
     "https://hdrezka.ag/", "https://rezka.ag/", "https://hdrezka.me/", 
     "https://hdrezka.sh/", "https://hdrezka.website/", "https://hdrezka.lv/"
 ]
+current_mirror_idx = 0
+
+def get_working_mirror():
+    global current_mirror_idx
+    return MIRRORS[current_mirror_idx]
+
+def rotate_mirror():
+    global current_mirror_idx
+    current_mirror_idx = (current_mirror_idx + 1) % len(MIRRORS)
+    logger.info(f"Switched to mirror: {MIRRORS[current_mirror_idx]}")
 
 def create_scraper():
     """Создает сессию с поддержкой прокси и имитацией браузера"""
@@ -52,29 +62,33 @@ def create_scraper():
     
     proxy = os.environ.get("PROXY_URL")
     if proxy:
-        logger.info(f"Using proxy: {proxy}")
         s.proxies = {"http": proxy, "https": proxy}
     return s
 
 app = FastAPI()
 
 @app.get("/api/search")
-async def search(query: str = Query(...)):
+async def search(query: str = Query(...), depth: int = 0):
+    if depth >= len(MIRRORS): return []
     try:
         s = create_scraper()
-        rezka_session = HdRezkaSession(MIRRORS[0])
+        rezka_session = HdRezkaSession(get_working_mirror())
         rezka_session.session = s
         results = rezka_session.search(query)
-        return results.all if hasattr(results, 'all') else results
+        data = results.all if hasattr(results, 'all') else results
+        if not data: raise Exception("Empty results")
+        return data
     except Exception as e:
-        logger.error(f"Search error: {e}")
-        return []
+        logger.error(f"Search error on {get_working_mirror()}: {e}")
+        rotate_mirror()
+        return await search(query, depth + 1)
 
 @app.get("/api/info")
-async def get_info(url: str = Query(...)):
+async def get_info(url: str = Query(...), depth: int = 0):
+    if depth >= len(MIRRORS): raise HTTPException(status_code=502, detail="All mirrors failed")
     try:
         s = create_scraper()
-        rezka_session = HdRezkaSession(MIRRORS[0])
+        rezka_session = HdRezkaSession(get_working_mirror())
         rezka_session.session = s
         rezka = rezka_session.get(url)
         info = {
@@ -89,19 +103,34 @@ async def get_info(url: str = Query(...)):
             info["seriesInfo"] = rezka.seriesInfo
         return info
     except Exception as e:
-        logger.error(f"Info error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Info error on {get_working_mirror()}: {e}")
+        rotate_mirror()
+        # Если URL содержит домен другого зеркала, заменяем его на текущее рабочее
+        new_url = url
+        for m in MIRRORS:
+            if m in url:
+                new_url = url.replace(m, get_working_mirror())
+                break
+        return await get_info(new_url, depth + 1)
 
 @app.get("/api/stream")
-async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
+async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None, depth: int = 0):
+    if depth >= len(MIRRORS): raise HTTPException(status_code=502, detail="Stream failed on all mirrors")
     try:
+        full_url = url
         if not url.startswith('http'):
-            url = MIRRORS[0].rstrip('/') + ("" if url.startswith('/') else "/") + url
+            full_url = get_working_mirror().rstrip('/') + ("" if url.startswith('/') else "/") + url
+        else:
+            # Заменяем домен в URL на текущее рабочее зеркало
+            for m in MIRRORS:
+                if m in url:
+                    full_url = url.replace(m, get_working_mirror())
+                    break
             
         s = create_scraper()
-        rezka_session = HdRezkaSession(MIRRORS[0])
+        rezka_session = HdRezkaSession(get_working_mirror())
         rezka_session.session = s
-        rezka = rezka_session.get(url)
+        rezka = rezka_session.get(full_url)
         
         t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
         
@@ -115,21 +144,25 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
             "subtitles": stream.subtitles.subtitles if stream and hasattr(stream, 'subtitles') and stream.subtitles else None
         }
     except Exception as e:
-        logger.error(f"Stream error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Stream error on {get_working_mirror()}: {e}")
+        rotate_mirror()
+        return await get_stream(url, translator_id, season, episode, depth + 1)
 
 @app.get("/api/new")
-async def get_new(category: str = "last", page: int = 1):
+async def get_new(category: str = "last", page: int = 1, depth: int = 0):
+    if depth >= len(MIRRORS): return []
     try:
         s = create_scraper()
-        base = MIRRORS[0].rstrip('/')
+        base = get_working_mirror().rstrip('/')
         url = f"{base}/page/{page}/" if category == "last" else f"{base}/{category}/page/{page}/"
         
-        response = s.get(url, timeout=45)
-        if response.status_code != 200: return []
+        response = s.get(url, timeout=20)
+        if response.status_code != 200: raise Exception(f"Status {response.status_code}")
 
         soup = BeautifulSoup(response.text, 'html.parser')
         items = soup.find_all('div', class_='b-content__inline_item')
+        if not items: raise Exception("No items found")
+        
         results = []
         for item in items:
             try:
@@ -145,8 +178,9 @@ async def get_new(category: str = "last", page: int = 1):
             except: continue
         return results
     except Exception as e:
-        logger.error(f"New list error: {e}")
-        return []
+        logger.error(f"New list error on {get_working_mirror()}: {e}")
+        rotate_mirror()
+        return await get_new(category, page, depth + 1)
 
 # Статические файлы
 if not os.path.exists("static"): os.makedirs("static")
