@@ -1,15 +1,17 @@
 import logging
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from HdRezkaApi import HdRezkaApi, HdRezkaSession
-from HdRezkaApi.search import HdRezkaSearch
 import os
 import requests
 import cloudscraper
 import time
 import random
 import ssl
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
+from HdRezkaApi import HdRezkaApi, HdRezkaSession
+from HdRezkaApi.search import HdRezkaSearch
 
 # Глобальный патч для SSL (решает проблему check_hostname в Python 3.12+)
 try:
@@ -23,6 +25,13 @@ else:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Кастомный адаптер для полного отключения проверок SSL в requests
+class SSLAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["cert_reqs"] = ssl.CERT_NONE
+        kwargs["assert_hostname"] = False
+        return super().init_poolmanager(*args, **kwargs)
+
 # Список максимально стабильных зеркал
 MIRRORS = [
     "https://hdrezka.ag/", 
@@ -34,9 +43,6 @@ MIRRORS = [
     "https://hdrezka.lv/"
 ]
 current_mirror_index = 0
-
-# Инициализация Cloudscraper будет происходить внутри функций с поддержкой прокси
-scraper = None
 
 def get_random_proxy():
     """Читает список прокси из одного файла и выбирает случайный"""
@@ -52,15 +58,6 @@ def get_random_proxy():
     except Exception as e:
         logger.error(f"Error loading proxies: {e}")
     return None
-
-from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
-
-class SSLAdapter(HTTPAdapter):
-    def init_poolmanager(self, *args, **kwargs):
-        kwargs["cert_reqs"] = ssl.CERT_NONE
-        kwargs["assert_hostname"] = False
-        return super().init_poolmanager(*args, **kwargs)
 
 def create_new_scraper():
     """Создает сессию с поддержкой прокси и принудительным отключением SSL-проверок"""
@@ -355,7 +352,15 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
                     continue
             return results
         
-        # Если статус не 200, пробуем другой прокси
+        # Если статус 403, пробуем другое зеркало и новый прокси
+        if response.status_code == 403:
+            logger.warning(f"Mirror {session.origin} returned 403, rotating mirror and proxy...")
+            current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
+            scraper = create_new_scraper()
+            session = get_session()
+            return await get_new(category, page, depth + 1)
+        
+        # Если другой плохой статус
         logger.warning(f"Bad status {response.status_code}, retrying with new proxy...")
         scraper = create_new_scraper()
         session = get_session()
