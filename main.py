@@ -13,26 +13,8 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация Cloudscraper для обхода Cloudflare
-scraper = cloudscraper.create_scraper(
-    browser={
-        'browser': 'chrome',
-        'platform': 'windows',
-        'desktop': True
-    }
-)
-
-# Список максимально стабильных зеркал
-MIRRORS = [
-    "https://hdrezka.ag/", 
-    "https://rezka.ag/", 
-    "https://hdrezka.me/", 
-    "https://hdrezka.sh/",
-    "https://hdrezka.website/",
-    "https://hdrezka.ac/",
-    "https://hdrezka.lv/"
-]
-current_mirror_index = 0
+# Инициализация Cloudscraper будет происходить внутри функций с поддержкой прокси
+scraper = None
 
 def get_random_proxy():
     """Читает список прокси из одного файла и выбирает случайный"""
@@ -50,7 +32,7 @@ def get_random_proxy():
     return None
 
 def create_new_scraper():
-    """Создает новый экземпляр cloudscraper с поддержкой прокси и ротацией"""
+    """Создает новый экземпляр cloudscraper с поддержкой прокси и отключенным SSL"""
     s = cloudscraper.create_scraper(
         browser={
             'browser': 'chrome',
@@ -60,20 +42,18 @@ def create_new_scraper():
         }
     )
     
-    # Отключаем проверку SSL для прокси, чтобы избежать SSLV3_ALERT_HANDSHAKE_FAILURE
+    # КРИТИЧЕСКИ ВАЖНО: Отключаем проверку SSL
     s.verify = False
     
-    # Сначала проверяем переменную окружения (приоритет)
-    proxy_url = os.environ.get("PROXY_URL")
-    
-    # Если переменной нет, берем случайный из файлов
-    if not proxy_url:
-        proxy_url = get_random_proxy()
-        
+    # Поддержка прокси
+    proxy_url = os.environ.get("PROXY_URL") or get_random_proxy()
     if proxy_url:
         s.proxies = {"http": proxy_url, "https": proxy_url}
             
     return s
+
+# Первоначальная настройка
+scraper = create_new_scraper()
 
 def get_session(mirror_idx=None):
     """Создает сессию с поддержкой cloudscraper, прокси и ротацией зеркал"""
