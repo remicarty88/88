@@ -271,24 +271,54 @@ async def get_info(url: str = Query(...)):
 
 @app.get("/api/stream")
 async def get_stream(url: str = Query(...), translator_id: str = None, season: str = None, episode: str = None):
-    """Получение потока через cloudscraper"""
+    """Получение потока с расширенным логированием ошибок"""
+    global session, scraper
     try:
-        logger.info(f"Getting stream for: {url}, translator: {translator_id}, s: {season}, e: {episode}")
-        rezka = session.get(url)
-        
-        if "tv_series" in str(rezka.type):
-            if not season or not episode:
-                season, episode = "1", "1"
-            stream = rezka.getStream(season, episode, translation=translator_id)
-        else:
-            stream = rezka.getStream(translation=translator_id)
+        # 1. Исправляем URL если он относительный
+        full_url = url
+        if not url.startswith('http'):
+            full_url = session.origin.rstrip('/') + ("" if url.startswith('/') else "/") + url
             
+        logger.info(f"Stream request: {full_url}, translator: {translator_id}, s: {season}, e: {episode}")
+        
+        # 2. Очищаем translator_id
+        t_id = None if translator_id in [None, "", "null", "undefined"] else translator_id
+        
+        # 3. Получаем Cookies через scraper
+        try:
+            scraper.get(full_url, timeout=15)
+        except Exception as se:
+            logger.warning(f"Scraper pre-fetch failed: {se}")
+        
+        # 4. Инициализация Rezka
+        rezka = session.get(full_url)
+        rezka.session = scraper # Используем сессию с куками
+        
+        if not rezka.ok:
+            logger.error(f"Rezka object not OK: {rezka.exception}")
+            raise Exception(f"Rezka initialization failed: {rezka.exception}")
+
+        # 5. Получение потока
+        if "series" in str(rezka.type).lower():
+            s, e = season or "1", episode or "1"
+            logger.info(f"Fetching series stream: S{s}E{e}")
+            stream = rezka.getStream(s, e, translation=t_id)
+        else:
+            logger.info("Fetching movie stream")
+            stream = rezka.getStream(translation=t_id)
+            
+        if not stream or not hasattr(stream, 'videos') or not stream.videos:
+            logger.error(f"Stream empty or no videos. Stream object: {stream}")
+            raise Exception("Links not found in Rezka response")
+
         return {
             "videos": stream.videos,
             "subtitles": stream.subtitles.subtitles if hasattr(stream, 'subtitles') and stream.subtitles else None
         }
     except Exception as e:
-        logger.error(f"Stream error: {str(e)}")
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Stream error detail: {error_details}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/new")
