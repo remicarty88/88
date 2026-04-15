@@ -61,8 +61,8 @@ def get_random_proxy():
         pass
     return None
 
-def create_new_scraper():
-    """Создает сессию с поддержкой прокси и имитацией браузера"""
+def create_new_scraper(force_rotate=False):
+    """Создает сессию с поддержкой прокси и автоматической ротацией при ошибках"""
     s = requests.Session()
     adapter = SSLAdapter()
     s.mount("https://", adapter)
@@ -78,7 +78,11 @@ def create_new_scraper():
         'Connection': 'keep-alive',
     })
     
-    proxy_url = os.environ.get("PROXY_URL") or get_random_proxy()
+    # Если принудительная ротация или прокси не задан в переменных - берем из файла
+    proxy_url = os.environ.get("PROXY_URL")
+    if not proxy_url or force_rotate:
+        proxy_url = get_random_proxy()
+        
     if proxy_url:
         logger.info(f"Using proxy: {proxy_url}")
         s.proxies = {"http": proxy_url, "https": proxy_url}
@@ -305,8 +309,8 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
             
         logger.info(f"Fetching [Attempt {depth}]: {url}")
         
-        # Уменьшаем таймаут до 10 секунд
-        response = scraper.get(url, timeout=10, verify=False)
+        # Увеличиваем таймаут до 30 секунд для медленных прокси
+        response = scraper.get(url, timeout=30, verify=False)
         
         if response.status_code == 200:
             # ... (парсинг)
@@ -351,20 +355,20 @@ async def get_new(category: str = "last", page: int = 1, depth: int = 0):
         if response.status_code == 403:
             logger.warning(f"Mirror {session.origin} returned 403, rotating mirror and proxy...")
             current_mirror_index = (current_mirror_index + 1) % len(MIRRORS)
-            scraper = create_new_scraper()
+            scraper = create_new_scraper(force_rotate=True)
             session = get_session()
             return await get_new(category, page, depth + 1)
         
         # Если другой плохой статус
         logger.warning(f"Bad status {response.status_code}, retrying with new proxy...")
-        scraper = create_new_scraper()
+        scraper = create_new_scraper(force_rotate=True)
         session = get_session()
         return await get_new(category, page, depth + 1)
 
     except Exception as e:
         logger.error(f"Failed to fetch new content: {str(e)}")
-        # При любой ошибке (SSL, Connection, Timeout) меняем прокси и пробуем снова
-        scraper = create_new_scraper()
+        # При любой ошибке меняем прокси и пробуем снова
+        scraper = create_new_scraper(force_rotate=True)
         session = get_session()
         return await get_new(category, page, depth + 1)
 
@@ -382,4 +386,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
