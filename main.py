@@ -53,35 +53,37 @@ def get_random_proxy():
         logger.error(f"Error loading proxies: {e}")
     return None
 
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
+
+class SSLAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["cert_reqs"] = ssl.CERT_NONE
+        kwargs["assert_hostname"] = False
+        return super().init_poolmanager(*args, **kwargs)
+
 def create_new_scraper():
-    """Создает новый экземпляр cloudscraper с поддержкой прокси и исправлением SSL"""
-    s = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'desktop': True,
-            'mobile': False
-        }
-    )
+    """Создает сессию с поддержкой прокси и принудительным отключением SSL-проверок"""
+    s = requests.Session()
     
-    # КРИТИЧЕСКИЙ ФИКС ДЛЯ PYTHON 3.12+
-    # Отключаем проверку SSL и имен хостов для прокси
+    # Монтируем кастомный адаптер для игнорирования всех SSL-ошибок
+    adapter = SSLAdapter()
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    
+    # КРИТИЧЕСКИЙ ФИКС
     s.verify = False
     s.trust_env = False
     
-    # Принудительно отключаем проверку в адаптерах
-    for adapter in s.adapters.values():
-        if hasattr(adapter, "poolmanager"):
-            adapter.poolmanager.connection_pool_kw["cert_reqs"] = "CERT_NONE"
-            adapter.poolmanager.connection_pool_kw["assert_hostname"] = False
+    # Имитация браузера через cloudscraper (только для решения JS-челленджей если нужно)
+    # Но сейчас мы используем чистый requests для обхода SSL-ошибок
+    s.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+    })
     
-    # Поддержка прокси через переменную окружения или захардкоженный вариант
-    proxy_url = os.environ.get("PROXY_URL")
-    
-    # Если переменной нет, пробуем взять случайный из файла
-    if not proxy_url:
-        proxy_url = get_random_proxy()
-        
+    # Поддержка прокси
+    proxy_url = os.environ.get("PROXY_URL") or get_random_proxy()
     if proxy_url:
         logger.info(f"Using proxy: {proxy_url}")
         s.proxies = {"http": proxy_url, "https": proxy_url}
