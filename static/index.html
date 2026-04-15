@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
+    <title>CineStream Next — Будущее кино</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.4);
+            --bg: #050507;
+            --card-bg: #101014;
+            --text-main: #ffffff;
+            --text-dim: #94a3b8;
+            --glass: rgba(15, 15, 20, 0.7);
+        }
+
+        body { 
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;
+            scroll-behavior: smooth;
+        }
+
+        /* Ультра-адаптивный контейнер */
+        .safe-area-inset {
+            padding-left: env(safe-area-inset-left);
+            padding-right: env(safe-area-inset-right);
+        }
+
+        .glass-nav {
+            background: var(--glass);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .hero-vignette {
+            background: radial-gradient(circle at 20% 50%, transparent 0%, var(--bg) 85%),
+                        linear-gradient(to top, var(--bg) 0%, transparent 40%);
+        }
+
+        .movie-card {
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            transform-origin: center;
+            position: relative;
+            z-index: 1;
+            margin: 10px 5px; /* Добавлены отступы чтобы карточки не слипались */
+        }
+
+        @media (hover: hover) {
+            .movie-card:hover {
+                transform: scale(1.08) translateY(-10px);
+                z-index: 50; /* Карточка при наведении всегда сверху */
+                box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+            }
+            .movie-card:hover .card-overlay {
+                opacity: 1;
+            }
+        }
+
+        /* Исправленный градиент текста */
+        .title-gradient {
+            background: linear-gradient(135deg, #ffffff 0%, #94a3b8 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .accent-gradient {
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+        }
+
+        /* Кастомный скроллбар */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+
+        /* Плеер */
+        .plyr {
+            --plyr-color-main: var(--accent);
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Анимации */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+
+        .loader-ring {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(99, 102, 241, 0.1);
+            border-top: 3px solid var(--accent);
+            border-radius: 50%;
+            animation: spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Мобильные табы */
+        .mobile-tab.active i {
+            color: var(--accent);
+            filter: drop-shadow(0 0 8px var(--accent-glow));
+        }
+
+        /* Полноэкранный плеер оверлей */
+        #player-view {
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateY(30px);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #player-view.show {
+            transform: translateY(0);
+            opacity: 1;
+            pointer-events: auto;
+        }
+    </style>
+</head>
+<body class="no-scrollbar">
+
+    <!-- Preloader -->
+    <div id="preloader" class="fixed inset-0 z-[100] bg-[#050507] flex items-center justify-center transition-all duration-700">
+        <div class="flex flex-col items-center">
+            <div class="loader-ring mb-6"></div>
+            <h1 class="text-2xl font-black tracking-tighter title-gradient uppercase">CineStream</h1>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header id="header" class="fixed top-0 inset-x-0 z-50 glass-nav transition-all duration-300">
+        <div class="max-w-[1800px] mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-10">
+                <div class="flex items-center gap-2 cursor-pointer group" onclick="location.reload()">
+                    <div class="accent-gradient w-10 h-10 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform">
+                        <i data-lucide="play" class="w-5 h-5 text-white fill-white ml-0.5"></i>
+                    </div>
+                    <span class="text-xl font-bold tracking-tight hidden sm:block">Next<span class="text-indigo-500">.</span></span>
+                </div>
+                
+                <nav class="hidden lg:flex items-center gap-8 text-sm font-semibold text-slate-400">
+                    <a href="#" class="text-white relative after:content-[''] after:absolute after:-bottom-1 after:left-0 after:w-full after:h-0.5 after:bg-indigo-500 after:rounded-full">Главная</a>
+                    <a href="#" class="hover:text-white transition-colors">Кино</a>
+                    <a href="#" class="hover:text-white transition-colors">Сериалы</a>
+                    <a href="#" class="hover:text-white transition-colors">Тренды</a>
+                </nav>
+            </div>
+
+            <div class="flex items-center gap-6">
+                <div class="relative hidden md:block">
+                    <input type="text" id="desktop-search" placeholder="Поиск по названию..." 
+                           class="w-64 bg-slate-900/50 border border-slate-800 text-[13px] pl-10 pr-4 py-2.5 rounded-2xl focus:w-80 focus:border-indigo-500/50 outline-none transition-all">
+                    <i data-lucide="search" class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"></i>
+                </div>
+                <button class="p-2 text-slate-400 hover:text-white transition-colors md:hidden" onclick="toggleSearch()">
+                    <i data-lucide="search" class="w-6 h-6"></i>
+                </button>
+                <div class="w-10 h-10 rounded-2xl border border-slate-800 overflow-hidden cursor-pointer hover:border-indigo-500 transition-colors shadow-inner">
+                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Next" alt="Avatar">
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Search Overlay -->
+    <div id="search-modal" class="fixed inset-0 z-[60] bg-[#050507] hidden flex flex-col safe-area-inset animate-in fade-in zoom-in duration-300">
+        <header class="h-20 px-6 flex items-center gap-4 glass-nav">
+            <button onclick="toggleSearch()" class="p-2 text-slate-400 hover:text-white transition-colors">
+                <i data-lucide="arrow-left" class="w-7 h-7"></i>
+            </button>
+            <div class="flex-1 relative">
+                <input type="text" id="modal-search-input" placeholder="Поиск фильма или сериала..." 
+                       class="w-full bg-slate-900/50 border border-slate-800 text-lg font-semibold pl-4 pr-12 py-3 rounded-2xl focus:border-indigo-500/50 outline-none transition-all placeholder:text-slate-600">
+                <button id="clear-search" class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hidden" onclick="clearSearchInput()">
+                    <i data-lucide="x-circle" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </header>
+        
+        <div id="search-grid" class="flex-1 overflow-y-auto p-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 no-scrollbar">
+            <!-- Начальное состояние (пусто) -->
+            <div class="col-span-full py-20 flex flex-col items-center justify-center text-slate-600 text-center space-y-4">
+                <div class="w-20 h-20 rounded-full bg-slate-900/50 flex items-center justify-center">
+                    <i data-lucide="search" class="w-10 h-10 opacity-20"></i>
+                </div>
+                <p class="text-sm font-medium">Введите название фильма,<br>чтобы начать поиск</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Category Full View -->
+    <div id="category-modal" class="fixed inset-0 z-[55] bg-[#050507] hidden flex flex-col safe-area-inset animate-in slide-in-from-right duration-500">
+        <header class="h-20 px-6 flex items-center gap-4 glass-nav sticky top-0 z-10">
+            <button onclick="closeCategoryView()" class="p-3 hover:bg-slate-900 rounded-2xl transition-colors">
+                <i data-lucide="chevron-left" class="w-7 h-7"></i>
+            </button>
+            <h2 id="category-view-title" class="text-2xl font-bold tracking-tight title-gradient">Категория</h2>
+        </header>
+        <div id="category-view-grid" class="flex-1 overflow-y-auto p-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6 no-scrollbar">
+            <!-- Results will be injected here -->
+        </div>
+    </div>
+    <main class="pb-32">
+        <!-- Hero Section -->
+        <section id="hero" class="relative h-[100vh] w-full flex flex-col justify-end px-8 md:px-20 pb-20 overflow-hidden">
+            <div id="hero-bg" class="absolute inset-0 z-0">
+                <div id="hero-img-container" class="w-full h-full">
+                    <div class="w-full h-full bg-slate-900 animate-pulse"></div>
+                </div>
+                <div class="absolute inset-0 hero-vignette"></div>
+            </div>
+            
+            <div id="hero-content" class="relative z-10 max-w-4xl opacity-0 transition-opacity duration-1000">
+                <div class="flex items-center gap-4 mb-6">
+                    <div class="flex items-center gap-1.5 px-3 py-1 bg-indigo-500/20 border border-indigo-500/30 rounded-full">
+                        <span class="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
+                        <span class="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Громкая премьера</span>
+                    </div>
+                    <span id="hero-rating" class="text-slate-400 text-xs font-bold flex items-center gap-1.5"><i data-lucide="star" class="w-4 h-4 text-yellow-500 fill-yellow-500"></i> 8.5</span>
+                    <span id="hero-year" class="text-slate-500 text-xs font-bold"></span>
+                </div>
+                
+                <h2 id="hero-title" class="text-6xl md:text-8xl font-black mb-8 tracking-tighter title-gradient leading-[0.9]">Загрузка...</h2>
+                <p id="hero-desc" class="text-slate-400 text-base md:text-xl mb-12 line-clamp-3 font-medium max-w-2xl leading-relaxed"></p>
+                
+                <div class="flex items-center gap-5">
+                    <button id="hero-play-btn" class="accent-gradient text-white px-10 py-4 rounded-3xl font-bold flex items-center justify-center gap-3 hover:shadow-2xl hover:shadow-indigo-500/40 transition-all transform hover:scale-105 active:scale-95">
+                        <i data-lucide="play" class="fill-current w-6 h-6"></i> Смотреть
+                    </button>
+                    <button class="bg-white/10 backdrop-blur-xl text-white border border-white/10 px-8 py-4 rounded-3xl font-bold flex items-center justify-center gap-3 hover:bg-white/20 transition-all">
+                        <i data-lucide="info" class="w-6 h-6"></i> Детали
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dynamic Content Rows -->
+        <div id="rows-container" class="space-y-20 px-8 md:px-20 mt-10">
+            <!-- Rows injected by JS -->
+        </div>
+    </main>
+
+    <!-- Mobile Navigation -->
+    <div class="fixed bottom-8 inset-x-8 z-50 lg:hidden">
+        <nav class="glass-nav rounded-[2.5rem] p-4 flex justify-around items-center shadow-2xl shadow-indigo-500/10 border border-white/5">
+            <button onclick="location.reload()" class="mobile-tab active flex flex-col items-center p-2"><i data-lucide="home" class="w-6 h-6"></i></button>
+            <button onclick="toggleSearch()" class="mobile-tab flex flex-col items-center p-2 text-slate-500"><i data-lucide="search" class="w-6 h-6"></i></button>
+            <button class="mobile-tab flex flex-col items-center p-2 text-slate-500"><i data-lucide="heart" class="w-6 h-6"></i></button>
+            <button class="mobile-tab flex flex-col items-center p-2 text-slate-500"><i data-lucide="user" class="w-6 h-6"></i></button>
+        </nav>
+    </div>
+
+    <!-- Fullscreen Player Modal -->
+    <div id="player-view" class="fixed inset-0 z-[110] bg-[#050507] overflow-y-auto no-scrollbar pb-20">
+        <header class="sticky top-0 z-20 px-8 h-20 flex items-center justify-between glass-nav">
+            <button onclick="closePlayer()" class="p-3 hover:bg-slate-900 rounded-2xl transition-colors"><i data-lucide="x" class="w-6 h-6"></i></button>
+            <h3 id="player-title" class="text-lg font-bold truncate px-4 max-w-md"></h3>
+            <div class="flex items-center gap-4">
+                <span class="text-[10px] font-bold px-2 py-1 bg-indigo-500/20 text-indigo-400 rounded-lg uppercase tracking-wider">Ultra HD</span>
+                <div class="w-10"></div>
+            </div>
+        </header>
+
+        <div class="max-w-[1400px] mx-auto p-8 flex flex-col lg:flex-row gap-12">
+            <!-- Main Content Area -->
+            <div class="flex-1 space-y-10">
+                <div class="aspect-video bg-black rounded-[2.5rem] overflow-hidden shadow-2xl border border-white/5 ring-1 ring-white/5">
+                    <video id="player" playsinline controls></video>
+                </div>
+                
+                <div class="space-y-8">
+                    <div class="flex flex-wrap items-center gap-6">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="star" class="w-5 h-5 text-yellow-500 fill-yellow-500"></i>
+                            <span id="player-rating-val" class="text-xl font-bold">8.9</span>
+                        </div>
+                        <div class="h-4 w-px bg-slate-800"></div>
+                        <span id="player-year-val" class="text-slate-400 font-medium"></span>
+                        <div id="player-series-count" class="hidden flex items-center gap-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-[11px] font-bold text-indigo-400 uppercase tracking-wider">
+                            <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+                            <span id="player-series-total">0 сезонов</span>
+                        </div>
+                        <span id="player-genre-val" class="text-slate-400 px-3 py-1 border border-slate-800 rounded-xl text-xs font-bold uppercase tracking-widest">Sci-Fi</span>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <h4 class="text-sm font-bold uppercase tracking-[0.2em] text-indigo-400">Сюжет</h4>
+                        <p id="player-desc" class="text-slate-400 text-lg leading-relaxed font-medium"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls Panel -->
+            <div class="w-full lg:w-[400px] space-y-10">
+                <div class="space-y-6">
+                    <div class="flex items-center gap-3">
+                        <i data-lucide="languages" class="w-5 h-5 text-indigo-500"></i>
+                        <h4 class="text-sm font-bold uppercase tracking-widest text-slate-500">Перевод</h4>
+                    </div>
+                    <select id="translatorSelect" onchange="changeTranslation()" 
+                            class="w-full bg-slate-900/50 border border-slate-800 text-white p-5 rounded-[2rem] focus:ring-2 focus:ring-indigo-500/50 outline-none transition-all appearance-none cursor-pointer">
+                    </select>
+                </div>
+
+                <div id="series-panel" class="hidden space-y-8">
+                    <!-- Блок сезонов -->
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+                                    <i data-lucide="layers" class="w-4 h-4 text-indigo-500"></i>
+                                </div>
+                                <h4 class="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Сезоны</h4>
+                            </div>
+                            <span id="total-seasons-badge" class="px-2 py-1 bg-slate-900 rounded-md text-[10px] font-bold text-slate-400 border border-slate-800"></span>
+                        </div>
+                        <div id="seasons-list" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto no-scrollbar p-1">
+                            <!-- Кнопки сезонов -->
+                        </div>
+                    </div>
+
+                    <!-- Блок серий -->
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+                                    <i data-lucide="play-circle" class="w-4 h-4 text-indigo-500"></i>
+                                </div>
+                                <h4 class="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Эпизоды</h4>
+                            </div>
+                            <span id="current-episodes-count" class="text-[10px] font-bold text-indigo-400"></span>
+                        </div>
+                        <div id="episodes-grid" class="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-4 gap-3 max-h-64 overflow-y-auto pr-2 custom-scroll">
+                            <!-- Сетка серий -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+    <script>
+        lucide.createIcons();
+
+        // Player setup
+        const player = new Plyr('#player', {
+            quality: { default: 1080, options: [1080, 720, 480, 360] },
+            controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'captions', 'settings', 'pip', 'fullscreen'],
+            tooltips: { controls: true, seek: true }
+        });
+
+        let currentMovieInfo = null;
+        let currentUrl = '';
+        
+        // Initializer
+        window.addEventListener('load', async () => {
+            await loadHomeContent();
+            setTimeout(() => {
+                const preloader = document.getElementById('preloader');
+                preloader.style.opacity = '0';
+                preloader.style.transform = 'scale(1.1)';
+                setTimeout(() => preloader.remove(), 700);
+            }, 1000);
+        });
+
+        // Sticky header logic
+        window.addEventListener('scroll', () => {
+            const header = document.getElementById('header');
+            if (window.scrollY > 80) {
+                header.classList.add('h-16', 'shadow-2xl');
+                header.querySelector('div').classList.replace('h-20', 'h-16');
+            } else {
+                header.classList.remove('h-16', 'shadow-2xl');
+                header.querySelector('div').classList.replace('h-16', 'h-20');
+            }
+        });
+
+        async function loadHomeContent() {
+            const rows = [
+                { title: 'Мировые премьеры', category: 'last' },
+                { title: 'Популярное за неделю', category: 'films/2025' },
+                { title: 'Топ сериалов', category: 'series' },
+                { title: 'Турецкие сериалы', category: 'series/turkish' },
+                { title: 'Лучшие Дорамы', category: 'series/foreign' },
+                { title: 'Мистические триллеры', category: 'films/thriller' },
+                { title: 'Лучшие комедии', category: 'films/comedy' },
+                { title: 'Мультфильмы', category: 'cartoons' },
+                { title: 'Аниме шедевры', category: 'animation' }
+            ];
+
+            const container = document.getElementById('rows-container');
+            container.innerHTML = '';
+            
+            for (const row of rows) {
+                const section = document.createElement('section');
+                section.className = 'space-y-8 animate-in slide-in-from-bottom-10 duration-1000';
+                const rowId = row.category.replace(/\//g, '-');
+                section.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <div class="w-1 h-8 bg-indigo-500 rounded-full shadow-[0_0_15px_var(--accent-glow)]"></div>
+                            <h3 class="text-2xl font-bold tracking-tight">${row.title}</h3>
+                        </div>
+                        <button onclick="showCategoryFullView('${row.category}', '${row.title.replace(/'/g, "\\'")}')" class="p-3 text-slate-500 hover:text-white transition-colors">
+                            <i data-lucide="arrow-right" class="w-6 h-6"></i>
+                        </button>
+                    </div>
+                    <div class="flex gap-6 overflow-x-auto no-scrollbar pb-6 -mx-1 scroll-smooth">
+                        <div class="flex gap-6" id="row-${rowId}">
+                            <div class="col-span-full py-10 flex justify-center w-full"><div class="loader-ring"></div></div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(section);
+                fetchNewContent(row.category);
+            }
+            lucide.createIcons();
+        }
+
+        async function fetchNewContent(category) {
+            const rowId = category.replace(/\//g, '-');
+            const rowElement = document.getElementById(`row-${rowId}`);
+            try {
+                // Добавляем случайную страницу для разнообразия контента в рядах
+                const randomPage = Math.floor(Math.random() * 5) + 1;
+                const res = await fetch(`/api/new?category=${category}&page=${randomPage}`);
+                const movies = await res.json();
+                
+                if (movies && movies.length > 0) {
+                    if (category === 'last') updateHero(movies[0]);
+
+                    rowElement.innerHTML = movies.map(m => {
+                        let imageUrl = m.image;
+                        if (imageUrl && !imageUrl.startsWith('http')) {
+                            imageUrl = window.location.origin + (imageUrl.startsWith('/') ? '' : '/') + imageUrl;
+                        }
+                        return `
+                            <div class="movie-card shrink-0 w-36 md:w-56 aspect-[2/3] rounded-[2rem] overflow-hidden bg-slate-900/50 relative cursor-pointer border border-white/5"
+                                 onclick="openMovie('${m.url}', '${m.title.replace(/'/g, "\\'")}')" data-url="${m.url}">
+                                <img src="${imageUrl || 'https://via.placeholder.com/200x300/101014/6366f1?text=Loading'}" 
+                                     class="movie-poster-img w-full h-full object-cover transition-all duration-700"
+                                     loading="lazy"
+                                     onerror="this.src='https://via.placeholder.com/200x300/101014/6366f1?text=No+Poster'">
+                                <div class="card-overlay absolute inset-0 bg-gradient-to-t from-[#050507] via-transparent to-transparent opacity-0 transition-opacity duration-300 flex flex-col justify-end p-5">
+                                    <div class="bg-indigo-500 w-12 h-12 rounded-2xl flex items-center justify-center mb-4 translate-y-4 group-hover:translate-y-0 transition-transform duration-500 shadow-xl">
+                                        <i data-lucide="play" class="w-6 h-6 fill-white text-white ml-0.5"></i>
+                                    </div>
+                                    <span class="text-[10px] font-bold text-indigo-400 mb-2 uppercase tracking-widest">${m.category || 'Видео'}</span>
+                                    <h4 class="text-sm font-bold line-clamp-2 leading-tight">${m.title}</h4>
+                                </div>
+                                <div class="absolute top-4 right-4 px-2 py-1 glass rounded-lg text-[10px] font-bold text-yellow-500 border border-yellow-500/20">
+                                    IMDb ${m.rating || '-'}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                    lucide.createIcons();
+                } else {
+                    rowElement.innerHTML = '<div class="text-slate-600 text-sm p-10">Контент временно недоступен</div>';
+                }
+            } catch (e) {
+                rowElement.innerHTML = '<div class="text-red-900/50 text-sm p-10">Ошибка загрузки</div>';
+            }
+        }
+
+        async function updateHero(movie) {
+            if (!movie) return;
+            
+            const heroContent = document.getElementById('hero-content');
+            const heroTitle = document.getElementById('hero-title');
+            const heroDesc = document.getElementById('hero-desc');
+            const heroImgContainer = document.getElementById('hero-img-container');
+            const heroPlayBtn = document.getElementById('hero-play-btn');
+            const heroRating = document.getElementById('hero-rating');
+            const heroYear = document.getElementById('hero-year');
+
+            try {
+                const infoRes = await fetch(`/api/info?url=${encodeURIComponent(movie.url)}`);
+                const info = await infoRes.json();
+                
+                heroTitle.textContent = info.title || movie.title;
+                heroDesc.textContent = info.description || "";
+                heroRating.innerHTML = `<i data-lucide="star" class="w-4 h-4 text-yellow-500 fill-yellow-500"></i> ${info.rating || movie.rating || '8.5'}`;
+                
+                // Извлекаем год из описания или API если он есть
+                const yearMatch = info.description ? info.description.match(/\d{4}/) : null;
+                heroYear.textContent = yearMatch ? yearMatch[0] : "";
+
+                const poster = info.poster_hq || info.poster || movie.image;
+                if (poster) {
+                    heroImgContainer.innerHTML = `<img src="${poster}" class="w-full h-full object-cover animate-in fade-in duration-1000">`;
+                }
+                
+                heroPlayBtn.onclick = () => openMovie(movie.url, info.title || movie.title);
+                heroContent.classList.add('opacity-100');
+                lucide.createIcons();
+            } catch (e) {
+                console.error("Hero update failed", e);
+            }
+        }
+
+        async function getMoviesHtml(query, rowId) {
+            try {
+                const res = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
+                const movies = await res.json();
+                
+                // Сначала отрисовываем то что есть
+                const html = movies.map(m => {
+                    // Исправляем URL изображения если он относительный
+                    let imageUrl = m.image;
+                    if (imageUrl && !imageUrl.startsWith('http')) {
+                        imageUrl = window.location.origin + (imageUrl.startsWith('/') ? '' : '/') + imageUrl;
+                    }
+                    if (!imageUrl) imageUrl = 'https://via.placeholder.com/200x300/101014/6366f1?text=Loading';
+
+                    return `
+                        <div class="movie-card shrink-0 w-36 md:w-56 aspect-[2/3] rounded-[2rem] overflow-hidden bg-slate-900/50 relative cursor-pointer border border-white/5"
+                             onclick="openMovie('${m.url}')" data-url="${m.url}">
+                            <img src="${imageUrl}" 
+                                 class="movie-poster-img w-full h-full object-cover transition-all duration-700"
+                                 loading="lazy"
+                                 onerror="this.src='https://via.placeholder.com/200x300/101014/6366f1?text=No+Poster'">
+                            <div class="card-overlay absolute inset-0 bg-gradient-to-t from-[#050507] via-transparent to-transparent opacity-0 transition-opacity duration-300 flex flex-col justify-end p-5">
+                                <div class="bg-indigo-500 w-12 h-12 rounded-2xl flex items-center justify-center mb-4 translate-y-4 group-hover:translate-y-0 transition-transform duration-500 shadow-xl">
+                                    <i data-lucide="play" class="w-6 h-6 fill-white text-white ml-0.5"></i>
+                                </div>
+                                <span class="text-[10px] font-bold text-indigo-400 mb-2 uppercase tracking-widest">${m.category || 'Movie'}</span>
+                                <h4 class="text-sm font-bold line-clamp-2 leading-tight">${m.title}</h4>
+                            </div>
+                            <div class="absolute top-4 right-4 px-2 py-1 glass rounded-lg text-[10px] font-bold text-yellow-500 border border-yellow-500/20">
+                                IMDb ${m.rating || '8.0'}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                // Запускаем фоновую дозагрузку обложек через /api/info для тех у кого их нет
+                setTimeout(() => preloadPosters(movies), 100);
+
+                return html;
+            } catch (e) {
+                console.error("Error loading movies:", e);
+                return '';
+            }
+        }
+
+        async function preloadPosters(movies) {
+            // Берем первые 10 карточек из ряда для дозагрузки
+            for (const m of movies.slice(0, 10)) {
+                // Если картинка — плейсхолдер или пустая, тянем инфо
+                const cardImg = document.querySelector(`[data-url="${m.url}"] .movie-poster-img`);
+                if (cardImg && (cardImg.src.includes('placeholder') || !m.image)) {
+                    try {
+                        const infoRes = await fetch(`/api/info?url=${encodeURIComponent(m.url)}`);
+                        const info = await infoRes.json();
+                        if (info.poster) {
+                            cardImg.src = info.poster;
+                            cardImg.style.opacity = '1';
+                        }
+                    } catch (err) {
+                        console.log("Poster preload failed for", m.title);
+                    }
+                }
+            }
+        }
+
+        let searchTimeout = null;
+
+        // Очистка поиска
+        function clearSearchInput() {
+            const input = document.getElementById('modal-search-input');
+            input.value = '';
+            input.focus();
+            document.getElementById('clear-search').classList.add('hidden');
+            document.getElementById('search-grid').innerHTML = `
+                <div class="col-span-full py-20 flex flex-col items-center justify-center text-slate-600 text-center space-y-4">
+                    <div class="w-20 h-20 rounded-full bg-slate-900/50 flex items-center justify-center">
+                        <i data-lucide="search" class="w-10 h-10 opacity-20"></i>
+                    </div>
+                    <p class="text-sm font-medium">Введите название фильма,<br>чтобы начать поиск</p>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        // Корректный поиск с дебаунсом (задержкой)
+        async function handleSearch(query) {
+            const clearBtn = document.getElementById('clear-search');
+            if (query.length > 0) clearBtn.classList.remove('hidden');
+            else clearBtn.classList.add('hidden');
+
+            if (!query || query.length < 3) return;
+            
+            const grid = document.getElementById('search-grid');
+            grid.innerHTML = '<div class="col-span-full py-20 flex flex-col items-center gap-4"><div class="loader-ring"></div><span class="text-sm text-slate-500">Ищем лучшее для вас...</span></div>';
+            
+            try {
+                const res = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
+                const movies = await res.json();
+                
+                if (!movies || movies.length === 0) {
+                    grid.innerHTML = '<div class="col-span-full py-20 text-center text-slate-500 flex flex-col items-center gap-4"><i data-lucide="frown" class="w-12 h-12 opacity-20"></i>Ничего не нашли, попробуйте другое название</div>';
+                    lucide.createIcons();
+                    return;
+                }
+
+                grid.innerHTML = movies.map(m => {
+                    let imageUrl = m.image;
+                    if (imageUrl && !imageUrl.startsWith('http')) {
+                        imageUrl = window.location.origin + (imageUrl.startsWith('/') ? '' : '/') + imageUrl;
+                    }
+                    return `
+                        <div class="movie-card aspect-[2/3] rounded-3xl overflow-hidden bg-slate-900 cursor-pointer border border-white/5 group relative" 
+                             onclick="openMovie('${m.url}', '${m.title.replace(/'/g, "\\'")}')" data-url="${m.url}">
+                            <img src="${imageUrl || 'https://via.placeholder.com/200x300/101014/6366f1?text=Loading'}" 
+                                 class="movie-poster-img w-full h-full object-cover transition-all duration-500 group-hover:scale-110"
+                                 onerror="this.src='https://via.placeholder.com/200x300/101014/6366f1?text=No+Poster'">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
+                                <h4 class="text-[10px] font-bold text-center leading-tight line-clamp-2">${m.title}</h4>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                // Запускаем фоновую дозагрузку обложек для результатов поиска
+                setTimeout(() => preloadPosters(movies), 100);
+                lucide.createIcons();
+            } catch (e) {
+                grid.innerHTML = '<div class="col-span-full py-20 text-center text-red-500/50">Ошибка поиска. Попробуйте еще раз.</div>';
+            }
+        }
+
+        // Слушатель для десктопного поиска
+        document.getElementById('desktop-search').addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            const query = e.target.value;
+            if (query.length >= 3) {
+                searchTimeout = setTimeout(() => {
+                    toggleSearch(true); // Открываем модалку если вводим в шапке
+                    document.getElementById('modal-search-input').value = query;
+                    handleSearch(query);
+                }, 500);
+            }
+        });
+
+        // Слушатель для модального поиска
+        document.getElementById('modal-search-input').addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            const query = e.target.value;
+            searchTimeout = setTimeout(() => handleSearch(query), 500);
+        });
+
+        function toggleSearch(forceOpen = false) {
+            const modal = document.getElementById('search-modal');
+            const input = document.getElementById('modal-search-input');
+            const isHidden = modal.classList.contains('hidden');
+            
+            if (forceOpen || isHidden) {
+                modal.classList.remove('hidden');
+                input.focus();
+            } else {
+                modal.classList.add('hidden');
+            }
+        }
+
+        async function openMovie(url, previewTitle = '', previewPoster = '') {
+            if (!url) return;
+            currentUrl = url;
+            
+            // 1. МОМЕНТАЛЬНЫЙ ОТКЛИК: Сразу открываем оверлей и заполняем тем, что есть
+            document.getElementById('player-view').classList.add('show');
+            document.body.style.overflow = 'hidden';
+            
+            const titleEl = document.getElementById('player-title');
+            const descEl = document.getElementById('player-desc');
+            const yearEl = document.getElementById('player-year-val');
+            const ratingEl = document.getElementById('player-rating-val');
+            
+            if (previewTitle) titleEl.textContent = previewTitle;
+            yearEl.textContent = "...";
+            descEl.innerHTML = '<div class="space-y-2 animate-pulse"><div class="h-4 bg-slate-800 rounded w-full"></div><div class="h-4 bg-slate-800 rounded w-5/6"></div><div class="h-4 bg-slate-800 rounded w-4/6"></div></div>';
+
+            // Останавливаем старый плеер
+            player.pause();
+
+            try {
+                // 2. Фоновая загрузка данных
+                const res = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
+                const info = await res.json();
+                currentMovieInfo = info;
+
+                // Обновляем данные как только они пришли
+                titleEl.textContent = info.title;
+                descEl.textContent = info.description || 'Детали сюжета пока уточняются.';
+                ratingEl.textContent = info.rating || '8.5';
+                
+                // Извлекаем год
+                const yearMatch = info.description ? info.description.match(/\d{4}/) : null;
+                yearEl.textContent = yearMatch ? yearMatch[0] : "2025";
+                
+                const transSelect = document.getElementById('translatorSelect');
+                transSelect.innerHTML = Object.entries(info.translators || {}).map(([name, data]) => 
+                    `<option value="${data.id}">${name}</option>`
+                ).join('');
+
+                const seriesPanel = document.getElementById('series-panel');
+                const seriesTotalEl = document.getElementById('player-series-count');
+                const seriesTotalText = document.getElementById('player-series-total');
+                const totalSeasonsBadge = document.getElementById('total-seasons-badge');
+
+                // Очистка перед загрузкой нового фильма
+                seriesPanel.classList.add('hidden');
+                seriesTotalEl.classList.add('hidden');
+                document.getElementById('seasons-list').innerHTML = '';
+                document.getElementById('episodes-grid').innerHTML = '';
+
+                // ОПРЕДЕЛЯЕМ СЕРИАЛ: по типу, по URL или по данным
+                const infoType = String(info.type || "").toLowerCase();
+                const isSeriesUrl = url.includes('/series/') || url.includes('/animation/');
+                const hasSeriesData = info.seriesInfo && Object.keys(info.seriesInfo).length > 0;
+                const isTVSeries = infoType.includes('tv_series') || infoType.includes('series') || isSeriesUrl || hasSeriesData;
+
+                console.log("Deep content check:", { infoType, isSeriesUrl, hasSeriesData, isTVSeries });
+
+                if (isTVSeries) {
+                    // Если это точно сериал, но данных почему-то нет - показываем панель хотя бы с 1 серией
+                    seriesPanel.classList.remove('hidden');
+                    seriesTotalEl.classList.remove('hidden');
+                    
+                    const seasonsList = document.getElementById('seasons-list');
+                    const infoSeries = info.seriesInfo || {};
+                    const translatorIds = Object.keys(infoSeries);
+                    
+                    if (translatorIds.length > 0) {
+                        let activeTransId = transSelect.value;
+                        if (!infoSeries[activeTransId]) activeTransId = translatorIds[0];
+
+                        const translatorData = infoSeries[activeTransId];
+                        
+                        if (translatorData && translatorData.seasons) {
+                            const seasonsEntries = Object.entries(translatorData.seasons);
+                            const seasonsCount = seasonsEntries.length;
+                            
+                            seriesTotalText.textContent = `${seasonsCount} ${getNoun(seasonsCount, 'сезон', 'сезона', 'сезонов')}`;
+                            totalSeasonsBadge.textContent = `${seasonsCount} доступно`;
+
+                            seasonsList.innerHTML = seasonsEntries.map(([id, title], index) => `
+                                <button onclick="selectSeason('${id}', this)" 
+                                        class="season-btn px-4 py-2.5 rounded-xl text-xs font-bold border transition-all ${index === 0 ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-600'}">
+                                    ${title}
+                                </button>
+                            `).join('');
+
+                            window.currentSeasonId = seasonsEntries[0][0];
+                            updateEpisodes();
+                        } else {
+                            // Фолбэк если структура серий пуста (одна серия/сезон)
+                            seasonsList.innerHTML = '<button class="season-btn px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 border-indigo-400 text-white">1 сезон</button>';
+                            window.currentSeasonId = "1";
+                            document.getElementById('episodes-grid').innerHTML = `
+                                <button class="bg-slate-900 hover:bg-indigo-600 border border-slate-800 hover:border-indigo-400 py-4 rounded-2xl text-[13px] font-bold transition-all shadow-sm"
+                                        onclick="loadStream(currentUrl, '${activeTransId}', '1', '1')">1 серия</button>
+                            `;
+                        }
+                    } else {
+                        // Если нет списка переводчиков в seriesInfo, но это сериал
+                        seasonsList.innerHTML = '<button class="season-btn px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 border-indigo-400 text-white">1 сезон</button>';
+                        document.getElementById('episodes-grid').innerHTML = `
+                            <button class="bg-slate-900 hover:bg-indigo-600 border border-slate-800 hover:border-indigo-400 py-4 rounded-2xl text-[13px] font-bold transition-all shadow-sm"
+                                    onclick="loadStream(currentUrl, '${transSelect.value}', '1', '1')">1 серия</button>
+                        `;
+                    }
+                }
+
+                if (transSelect.value) {
+                    await loadStream(url, transSelect.value);
+                }
+            } catch (err) {
+                console.error('Error opening movie:', err);
+            }
+        }
+
+        async function loadStream(url, translatorId, season = null, episode = null) {
+            if (!url || !translatorId) return;
+            
+            let apiReq = `/api/stream?url=${encodeURIComponent(url)}&translator_id=${translatorId}`;
+            if (season) apiReq += `&season=${season}`;
+            if (episode) apiReq += `&episode=${episode}`;
+
+            try {
+                const res = await fetch(apiReq);
+                if (!res.ok) throw new Error('Stream fetch failed');
+                
+                const data = await res.json();
+                if (data.videos) {
+                    // Фильтруем только нужное качество: 1080, 720, 480
+                    const allowedQualities = ['1080p', '720p', '480p', '1080', '720', '480'];
+                    const sources = Object.entries(data.videos)
+                        .filter(([quality]) => allowedQualities.some(q => quality.includes(q)))
+                        .map(([quality, links]) => ({
+                            src: links[0],
+                            type: 'video/mp4',
+                            size: parseInt(quality) || quality
+                        }))
+                        .sort((a, b) => b.size - a.size); // Сортировка от большего к меньшему
+
+                    if (sources.length === 0) {
+                        // Если фильтр ничего не оставил, берем все что есть
+                        Object.entries(data.videos).forEach(([quality, links]) => {
+                            sources.push({
+                                src: links[0],
+                                type: 'video/mp4',
+                                size: parseInt(quality) || quality
+                            });
+                        });
+                    }
+
+                    player.source = { 
+                        type: 'video', 
+                        title: (currentMovieInfo && currentMovieInfo.title) ? currentMovieInfo.title : 'CineStream', 
+                        sources: sources 
+                    };
+                    
+                    const playPromise = player.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch(error => console.log("Autoplay blocked:", error));
+                    }
+                }
+            } catch (err) {
+                console.error('Stream load error:', err);
+            }
+        }
+
+        // Функция для склонения существительных
+        function getNoun(number, one, two, five) {
+            let n = Math.abs(number);
+            n %= 100;
+            if (n >= 5 && n <= 20) return five;
+            n %= 10;
+            if (n === 1) return one;
+            if (n >= 2 && n <= 4) return two;
+            return five;
+        }
+
+        function selectSeason(seasonId, btn) {
+            window.currentSeasonId = seasonId;
+            // Визуальное переключение активной кнопки
+            document.querySelectorAll('.season-btn').forEach(b => {
+                b.classList.remove('bg-indigo-600', 'border-indigo-400');
+                b.classList.add('bg-slate-900', 'hover:bg-slate-800');
+            });
+            btn.classList.remove('bg-slate-900', 'hover:bg-slate-800');
+            btn.classList.add('bg-indigo-600', 'border-indigo-400');
+            
+            updateEpisodes();
+        }
+
+        function updateEpisodes() {
+            const transId = document.getElementById('translatorSelect').value;
+            const seasonId = window.currentSeasonId;
+            const grid = document.getElementById('episodes-grid');
+            const seriesTotalText = document.getElementById('player-series-total');
+            const currentEpisodesCount = document.getElementById('current-episodes-count');
+            
+            if (!currentMovieInfo || !currentMovieInfo.seriesInfo) return;
+
+            const translatorData = currentMovieInfo.seriesInfo[transId];
+            if (translatorData && translatorData.episodes && translatorData.episodes[seasonId]) {
+                const episodes = translatorData.episodes[seasonId];
+                const episodesEntries = Object.entries(episodes).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+
+                // Обновляем счетчики
+                const seasonsCount = Object.keys(translatorData.seasons).length;
+                const episodesCount = episodesEntries.length;
+                seriesTotalText.textContent = `${seasonsCount} ${getNoun(seasonsCount, 'сезон', 'сезона', 'сезонов')}, ${episodesCount} ${getNoun(episodesCount, 'серия', 'серии', 'серий')}`;
+                currentEpisodesCount.textContent = `${episodesCount} ${getNoun(episodesCount, 'серия', 'серии', 'серий')}`;
+
+                grid.innerHTML = episodesEntries.map(([epId, epTitle]) => {
+                    return `
+                        <button class="bg-slate-900 hover:bg-indigo-600 border border-slate-800 hover:border-indigo-400 py-4 rounded-2xl text-[13px] font-bold transition-all shadow-sm"
+                                onclick="loadStream(currentUrl, '${transId}', '${seasonId}', '${epId}')">${epId}</button>
+                    `;
+                }).join('');
+            } else {
+                grid.innerHTML = '';
+                currentEpisodesCount.textContent = '0 серий';
+            }
+        }
+
+        function changeTranslation() {
+            const transId = document.getElementById('translatorSelect').value;
+            if (currentMovieInfo.type && currentMovieInfo.type.includes('tv_series') && currentMovieInfo.seriesInfo) {
+                const seasonsList = document.getElementById('seasons-list');
+                const translatorData = currentMovieInfo.seriesInfo[transId];
+                
+                if (translatorData && translatorData.seasons) {
+                    const seasonsEntries = Object.entries(translatorData.seasons);
+                    seasonsList.innerHTML = seasonsEntries.map(([id, title]) => {
+                        const isActive = id == window.currentSeasonId;
+                        return `
+                            <button onclick="selectSeason('${id}', this)" 
+                                    class="season-btn px-4 py-2 rounded-xl text-xs font-bold border border-slate-800 transition-all ${isActive ? 'bg-indigo-600 border-indigo-400' : 'bg-slate-900 hover:bg-slate-800'}">
+                                ${title}
+                            </button>
+                        `;
+                    }).join('');
+                    
+                    if (!translatorData.seasons[window.currentSeasonId]) {
+                        window.currentSeasonId = seasonsEntries[0][0];
+                    }
+                }
+                updateEpisodes();
+            } else {
+                loadStream(currentUrl, transId);
+            }
+        }
+
+        // Полноэкранный просмотр категории
+        async function showCategoryFullView(category, title) {
+            const modal = document.getElementById('category-modal');
+            const grid = document.getElementById('category-view-grid');
+            const titleEl = document.getElementById('category-view-title');
+            
+            titleEl.textContent = title;
+            grid.innerHTML = '<div class="col-span-full py-20 flex justify-center w-full"><div class="loader-ring"></div></div>';
+            modal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+
+            try {
+                const res = await fetch(`/api/new?category=${category}`);
+                const movies = await res.json();
+                
+                if (movies && movies.length > 0) {
+                    // Показываем количество (примерно, так как это первая страница)
+                    titleEl.innerHTML = `${title} <span class="text-sm font-medium text-slate-500 ml-2">${movies.length}+ новинок</span>`;
+                    
+                    grid.innerHTML = movies.map(m => {
+                        let imageUrl = m.image;
+                        if (imageUrl && !imageUrl.startsWith('http')) {
+                            imageUrl = window.location.origin + (imageUrl.startsWith('/') ? '' : '/') + imageUrl;
+                        }
+                        return `
+                            <div class="movie-card aspect-[2/3] rounded-[2rem] overflow-hidden bg-slate-900/50 relative cursor-pointer border border-white/5"
+                                 onclick="openMovie('${m.url}', '${m.title.replace(/'/g, "\\'")}')">
+                                <img src="${imageUrl || 'https://via.placeholder.com/200x300/101014/6366f1?text=Loading'}" 
+                                     class="movie-poster-img w-full h-full object-cover transition-all duration-700"
+                                     loading="lazy"
+                                     onerror="this.src='https://via.placeholder.com/200x300/101014/6366f1?text=No+Poster'">
+                                <div class="card-overlay absolute inset-0 bg-gradient-to-t from-[#050507] via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-5">
+                                    <h4 class="text-sm font-bold line-clamp-2 leading-tight">${m.title}</h4>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    // Дозагружаем качественные обложки для всех видимых элементов
+                    setTimeout(() => preloadPosters(movies), 100);
+                }
+            } catch (e) {
+                grid.innerHTML = '<div class="text-red-900/50 text-sm p-10">Ошибка загрузки контента</div>';
+            }
+            lucide.createIcons();
+        }
+
+        function closeCategoryView() {
+            document.getElementById('category-modal').classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+
+        function closePlayer() {
+            player.pause();
+            document.getElementById('player-view').classList.remove('show');
+            document.body.style.overflow = 'auto';
+        }
+    </script>
+</body>
+</html>
