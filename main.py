@@ -8,10 +8,23 @@ import os
 import requests
 import cloudscraper
 import time
+import random
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Список максимально стабильных зеркал
+MIRRORS = [
+    "https://hdrezka.ag/", 
+    "https://rezka.ag/", 
+    "https://hdrezka.me/", 
+    "https://hdrezka.sh/",
+    "https://hdrezka.website/",
+    "https://hdrezka.ac/",
+    "https://hdrezka.lv/"
+]
+current_mirror_index = 0
 
 # Инициализация Cloudscraper будет происходить внутри функций с поддержкой прокси
 scraper = None
@@ -344,4 +357,5 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
