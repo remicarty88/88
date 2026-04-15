@@ -35,6 +35,7 @@ MIRRORS = [
     "https://hdrezka.ag/", "https://rezka.ag/", "https://hdrezka.me/", 
     "https://hdrezka.sh/", "https://hdrezka.website/", "https://hdrezka.lv/"
 ]
+current_mirror_idx = 0
 
 def create_scraper():
     """Создает сессию с поддержкой прокси и имитацией браузера"""
@@ -59,16 +60,21 @@ def create_scraper():
 app = FastAPI()
 
 @app.get("/api/search")
-async def search(query: str = Query(...)):
+async def search(query: str = Query(...), depth: int = 0):
+    global current_mirror_idx
+    if depth >= len(MIRRORS): return []
     try:
+        mirror = MIRRORS[current_mirror_idx]
         s = create_scraper()
-        rezka_session = HdRezkaSession(MIRRORS[0])
+        rezka_session = HdRezkaSession(mirror)
         rezka_session.session = s
         results = rezka_session.search(query)
-        return results.all if hasattr(results, 'all') else results
-    except Exception as e:
-        logger.error(f"Search error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        data = results.all if hasattr(results, 'all') else results
+        if not data: raise Exception("Empty")
+        return data
+    except:
+        current_mirror_idx = (current_mirror_idx + 1) % len(MIRRORS)
+        return await search(query, depth + 1)
 
 @app.get("/api/info")
 async def get_info(url: str = Query(...)):
@@ -119,16 +125,17 @@ async def get_stream(url: str = Query(...), translator_id: str = None, season: s
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/new")
-async def get_new(category: str = "last", page: int = 1):
+async def get_new(category: str = "last", page: int = 1, depth: int = 0):
+    global current_mirror_idx
+    if depth >= len(MIRRORS): return []
     try:
+        mirror = MIRRORS[current_mirror_idx].rstrip('/')
+        url = f"{mirror}/page/{page}/" if category == "last" else f"{mirror}/{category}/page/{page}/"
         s = create_scraper()
-        base = MIRRORS[0].rstrip('/')
-        url = f"{base}/page/{page}/" if category == "last" else f"{base}/{category}/page/{page}/"
+        r = s.get(url, timeout=15)
+        if r.status_code != 200: raise Exception("Error")
         
-        response = s.get(url, timeout=45)
-        if response.status_code != 200: return []
-
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(r.text, 'html.parser')
         items = soup.find_all('div', class_='b-content__inline_item')
         results = []
         for item in items:
@@ -143,10 +150,11 @@ async def get_new(category: str = "last", page: int = 1):
                     "category": item.find('i', class_='entity').text.strip() if item.find('i', class_='entity') else "Видео"
                 })
             except: continue
+        if not results: raise Exception("Empty")
         return results
-    except Exception as e:
-        logger.error(f"New list error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except:
+        current_mirror_idx = (current_mirror_idx + 1) % len(MIRRORS)
+        return await get_new(category, page, depth + 1)
 
 # Статические файлы
 if not os.path.exists("static"): os.makedirs("static")
@@ -157,4 +165,3 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
-    
