@@ -91,26 +91,18 @@ def create_new_scraper(force_rotate=False):
 scraper = create_new_scraper()
 
 def get_session(mirror_idx=None):
-    """Инициализация сессии с получением Cookie для видео"""
+    """Инициализация сессии HdRezkaApi с ленивой загрузкой"""
     global current_mirror_index
     idx = mirror_idx if mirror_idx is not None else current_mirror_index
     origin = MIRRORS[idx].rstrip('/')
-    logger.info(f"Connecting to Rezka mirror: {origin}")
+    logger.info(f"Targeting mirror: {origin}")
     
-    try:
-        # Сначала делаем "прогревочный" запрос для получения Cookie
-        s_raw = create_new_scraper()
-        s_raw.get(origin, timeout=10) # Заходим на главную
-        
-        s = HdRezkaSession(origin)
-        s.session = s_raw # Передаем сессию с Cookie в библиотеку
-        return s
-    except Exception as e:
-        logger.error(f"Failed to init session: {e}")
-        # Если не вышло с Cookie, пробуем обычный метод
-        return HdRezkaSession(origin)
+    # Создаем сессию БЕЗ предварительного прогревочного запроса для быстрого старта
+    s = HdRezkaSession(origin)
+    s.session = create_new_scraper()
+    return s
 
-# Глобальные объекты
+# Быстрая инициализация глобальных объектов
 scraper = create_new_scraper()
 session = get_session()
 
@@ -420,3 +412,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+    
